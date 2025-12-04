@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  mediago-restful:
+    build: .
+    image: mediago-restful:latest
+    container_name: mediago-restful
+    ports:
+      - "8898:8898"
+    environment:
+      - NODE_ENV=production
+      - PORT=8898
+      - PRIVATE_KEY=${PRIVATE_KEY:-}
+      - STORAGE_PATH=/data/downloads
+      - STORAGE_MAX_BYTES=107374182400
+      - AUTO_CLEANUP=true
+      - AUTO_CLEANUP_DAYS=7
+      - MAX_CONCURRENT_DOWNLOADS=3
+      - MAX_CONCURRENT_TASKS=5
+    volumes:
+      - mediago-data:/data/downloads
+      - mediago-logs:/data/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8898/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  mediago-data:
+  mediago-logs:
