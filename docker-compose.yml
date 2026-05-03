@@ -1,15 +1,93 @@
 services:
-  mediago:
+  # ── Go download backend (apps/core) ──────────────────────────────────────
+  mediago-core:
     build:
-      context: ..
-      dockerfile: mediago/Dockerfile
+      context: apps/core
+      dockerfile: ../../Dockerfile # upstream multi-stage Go build
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      GIN_MODE: release
+      DB_PATH: /data/mediago.db
+      LOG_DIR: /logs
+      LOCAL_DIR: /downloads
+      MAX_RUNNER: "4"
+      DELETE_SEGMENTS: "true"
+    volumes:
+      - downloads:/downloads
+      - core-data:/data
+      - core-logs:/logs
+    restart: unless-stopped
+
+  # ── TypeScript Koa REST API (apps/restful) ────────────────────────────────
+  mediago-restful:
+    build:
+      context: apps/restful
+    ports:
+      - "8898:8898"
+    environment:
+      PORT: "8898"
+      MEDIAGO_BASE_URL: "http://mediago-core:8080"
+      STORAGE_PATH: /downloads
+      MAX_CONCURRENT_DOWNLOADS: "3"
+      MAX_CONCURRENT_TASKS: "5"
+      # Set PRIVATE_KEY to protect the API
+      # PRIVATE_KEY: "change-me"
+    volumes:
+      - downloads:/downloads
+    depends_on:
+      - mediago-core
+    restart: unless-stopped
+
+  # ── Python AI service (apps/ai-service) ───────────────────────────────────
+  mediago-ai:
+    build:
+      context: apps/ai-service
     ports:
       - "8899:8899"
+    environment:
+      PORT: "8899"
+      STORAGE_PATH: /downloads
+      # LM Studio must run on the host; use host.docker.internal or set explicit IP
+      LMSTUDIO_BASE_URL: "http://host.docker.internal:1234/v1"
+      LM_MODEL: "Qwen3.6-35B-A3B"
+      GPU_SLOTS: "2"
+      FUNASR_DEVICE: "cuda"
+      FUNASR_MODEL: "paraformer-zh"
     volumes:
-      - mediago-data:/app/data
-      - mediago-logs:/app/logs
+      - downloads:/downloads
+      - ai-models:/root/.cache # HuggingFace / ModelScope model cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 2
+              capabilities: [gpu]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # ── Admin WebUI (apps/admin-ui, production static build) ─────────────────
+  mediago-admin:
+    build:
+      context: apps/admin-ui
+      dockerfile: Dockerfile
+    ports:
+      - "5174:80"
+    environment:
+      VITE_GO_API_URL: "http://localhost:8080"
+      VITE_RESTFUL_API_URL: "http://localhost:8898"
+      VITE_AI_API_URL: "http://localhost:8899"
+    depends_on:
+      - mediago-core
+      - mediago-restful
+      - mediago-ai
     restart: unless-stopped
 
 volumes:
-  mediago-data:
-  mediago-logs:
+  downloads:
+  core-data:
+  core-logs:
+  ai-models:

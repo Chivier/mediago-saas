@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  ai-service:
+    build: .
+    image: mediago-ai-service:latest
+    container_name: mediago-ai-service
+    restart: unless-stopped
+    ports:
+      - "8899:8899"
+    environment:
+      - LMSTUDIO_BASE_URL=${LMSTUDIO_BASE_URL:-http://host.docker.internal:1234/v1}
+      - LM_MODEL=${LM_MODEL:-Qwen3.6-35B-A3B}
+      - GPU_SLOTS=${GPU_SLOTS:-2}
+      - FUNASR_DEVICE=${FUNASR_DEVICE:-cuda}
+      - FUNASR_MODEL=${FUNASR_MODEL:-paraformer-zh}
+      - HOST=0.0.0.0
+      - PORT=8899
+      - STORAGE_PATH=${STORAGE_PATH:-/data/mediago/storage}
+    volumes:
+      - ${STORAGE_PATH:-/data/mediago/storage}:/data/mediago/storage
+      # Cache FUNASR model weights between container restarts
+      - funasr-model-cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  funasr-model-cache:
