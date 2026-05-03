@@ -7,6 +7,8 @@ import {
   FileAudio,
   FileImage,
   File as FileIcon,
+  StickyNote,
+  Captions,
   ChevronRight,
   Home,
   Trash2,
@@ -22,6 +24,13 @@ import {
   CardTitle,
 } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
 import {
   Table,
   TableBody,
@@ -45,17 +54,66 @@ import {
   isPreviewable,
   formatBytes,
   type FileEntry,
+  type FileKind,
 } from "../api/files";
 
+// Single source of truth for icon sizing in this page. Earlier some
+// rows used 14px and others 16px, which made them visibly mismatched
+// when the table column auto-sized. Stick to one number per role.
+const ICON_PX = 18;
+const ACTION_ICON_PX = 14;
+
 function iconForEntry(entry: FileEntry) {
-  if (entry.isDir) return <Folder size={16} className="text-blue-500" />;
-  const k = previewKind(entry.ext);
-  if (k === "video") return <FileVideo size={16} className="text-purple-500" />;
-  if (k === "audio") return <FileAudio size={16} className="text-pink-500" />;
-  if (k === "image") return <FileImage size={16} className="text-green-500" />;
-  if (k === "text") return <FileText size={16} className="text-yellow-500" />;
-  return <FileIcon size={16} className="text-muted-foreground" />;
+  const cls = "flex-shrink-0";
+  if (entry.isDir)
+    return <Folder size={ICON_PX} className={`${cls} text-blue-500`} />;
+  // Use the server-supplied kind first (covers note/transcript named files);
+  // fall back to extension-only previewKind for older API responses.
+  switch (entry.kind) {
+    case "video":
+      return <FileVideo size={ICON_PX} className={`${cls} text-purple-500`} />;
+    case "audio":
+      return <FileAudio size={ICON_PX} className={`${cls} text-pink-500`} />;
+    case "image":
+      return <FileImage size={ICON_PX} className={`${cls} text-green-500`} />;
+    case "subtitle":
+      return <Captions size={ICON_PX} className={`${cls} text-amber-500`} />;
+    case "note":
+      return (
+        <StickyNote size={ICON_PX} className={`${cls} text-emerald-500`} />
+      );
+    case "transcript":
+    case "text":
+      return <FileText size={ICON_PX} className={`${cls} text-yellow-500`} />;
+    default: {
+      const k = previewKind(entry.ext);
+      if (k === "video")
+        return (
+          <FileVideo size={ICON_PX} className={`${cls} text-purple-500`} />
+        );
+      if (k === "audio")
+        return <FileAudio size={ICON_PX} className={`${cls} text-pink-500`} />;
+      if (k === "image")
+        return <FileImage size={ICON_PX} className={`${cls} text-green-500`} />;
+      if (k === "text")
+        return <FileText size={ICON_PX} className={`${cls} text-yellow-500`} />;
+      return (
+        <FileIcon size={ICON_PX} className={`${cls} text-muted-foreground`} />
+      );
+    }
+  }
 }
+
+const KIND_FILTERS: Array<{ value: FileKind | "all"; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "video", label: "视频" },
+  { value: "note", label: "笔记 (notes.md)" },
+  { value: "transcript", label: "转写稿" },
+  { value: "subtitle", label: "字幕 (srt/vtt)" },
+  { value: "audio", label: "音频" },
+  { value: "image", label: "图片" },
+  { value: "other", label: "其他" },
+];
 
 function PreviewDialog({
   entry,
@@ -139,12 +197,13 @@ function PreviewDialog({
 export function Files() {
   const queryClient = useQueryClient();
   const [cwd, setCwd] = useState("");
+  const [kindFilter, setKindFilter] = useState<FileKind | "all">("all");
   const [previewEntry, setPreviewEntry] = useState<FileEntry | null>(null);
   const [pendingDelete, setPendingDelete] = useState<FileEntry | null>(null);
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ["files", cwd],
-    queryFn: () => listFiles(cwd),
+    queryKey: ["files", cwd, kindFilter],
+    queryFn: () => listFiles(cwd, { kind: kindFilter }),
     refetchInterval: 15000,
   });
 
@@ -170,10 +229,28 @@ export function Files() {
 
   return (
     <div className="space-y-4">
-      {/* Breadcrumbs */}
+      {/* Breadcrumbs + filter */}
       <Card>
-        <CardHeader className="pb-2">
+        <CardHeader className="pb-2 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">Files</CardTitle>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">类型</span>
+            <Select
+              value={kindFilter}
+              onValueChange={(v) => setKindFilter(v as FileKind | "all")}
+            >
+              <SelectTrigger className="w-44 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {KIND_FILTERS.map((f) => (
+                  <SelectItem key={f.value} value={f.value} className="text-xs">
+                    {f.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-1 text-sm flex-wrap">
@@ -182,7 +259,7 @@ export function Files() {
               onClick={() => setCwd("")}
               className="flex items-center gap-1 hover:text-foreground text-muted-foreground"
             >
-              <Home size={14} />
+              <Home size={ACTION_ICON_PX} />
               <span>downloads</span>
             </button>
             {breadcrumbs.map((b) => (
@@ -240,7 +317,10 @@ export function Files() {
                     >
                       <TableCell colSpan={4} className="text-muted-foreground">
                         <div className="flex items-center gap-2">
-                          <Folder size={16} className="text-blue-500" />
+                          <Folder
+                            size={ICON_PX}
+                            className="flex-shrink-0 text-blue-500"
+                          />
                           ..
                         </div>
                       </TableCell>
@@ -290,7 +370,7 @@ export function Files() {
                                 aria-label="Preview"
                                 onClick={() => setPreviewEntry(entry)}
                               >
-                                <Eye size={14} />
+                                <Eye size={ACTION_ICON_PX} />
                               </Button>
                             )}
                             {!entry.isDir && (
@@ -298,13 +378,20 @@ export function Files() {
                                 variant="ghost"
                                 size="icon"
                                 aria-label="Download"
+                                title={
+                                  entry.kind === "note"
+                                    ? "Download notes"
+                                    : entry.kind === "transcript"
+                                      ? "Download transcript"
+                                      : "Download file"
+                                }
                                 asChild
                               >
                                 <a
                                   href={getFileDownloadUrl(entry.path)}
                                   download
                                 >
-                                  <DownloadIcon size={14} />
+                                  <DownloadIcon size={ACTION_ICON_PX} />
                                 </a>
                               </Button>
                             )}
@@ -312,10 +399,17 @@ export function Files() {
                               variant="ghost"
                               size="icon"
                               aria-label="Delete"
+                              title={
+                                entry.kind === "video"
+                                  ? "Delete video (notes stay)"
+                                  : entry.isDir
+                                    ? "Delete folder + everything inside"
+                                    : "Delete this file"
+                              }
                               className="text-destructive hover:text-destructive"
                               onClick={() => setPendingDelete(entry)}
                             >
-                              <Trash2 size={14} />
+                              <Trash2 size={ACTION_ICON_PX} />
                             </Button>
                           </div>
                         </TableCell>

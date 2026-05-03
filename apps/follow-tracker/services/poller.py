@@ -6,7 +6,9 @@ to ``succeeded``, capture the file path, and (when ``AUTO_AI_PROCESSING``
 is on) submit the file to the AI service for note generation.
 
 Then, for every video sitting in ``ai_status in (pending, processing)``,
-poll the AI service for completion and persist the JSON payload.
+poll the AI service for completion and persist the JSON payload — and
+write ``notes.md`` + ``transcript.txt`` next to the mp4 so the user can
+browse them in the Files page without going through the API.
 
 Designed to be called every ``DOWNLOAD_POLL_SECONDS`` from APScheduler.
 A single tick runs in linear time over the small set of in-flight
@@ -19,7 +21,8 @@ import datetime as dt
 import json
 import logging
 import os
-from typing import Optional
+import shutil
+from typing import Any, Optional
 
 from sqlalchemy import select
 
@@ -77,7 +80,9 @@ def _catch_up_missing_ai(ai: AIClient, summary: dict) -> None:
 
     for row in rows:
         try:
-            job_id = ai.submit_notes(file_path=row.file_path, title=row.title)
+            job_id = ai.submit_notes(
+                file_path=row.file_path, title=row.title, language="zh"
+            )
         except AIClientError as exc:
             logger.warning("catch-up: ai submit failed for video %s: %s", row.id, exc)
             with session_scope() as s:
@@ -114,6 +119,11 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
         status = data.get("status")
         if status == "success":
             file_path = _resolve_file_path(data)
+            # Tidy: BBDown leaves an aid-named tmp dir under the work-dir
+            # alongside the merged mp4; remove it so the Files page only
+            # shows the user-facing video + notes.
+            if file_path:
+                _cleanup_temp_dirs(os.path.dirname(file_path))
             with session_scope() as s:
                 v = s.get(Video, row.id)
                 if v is None:
@@ -125,7 +135,9 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
 
             if AUTO_AI_PROCESSING and file_path:
                 try:
-                    job_id = ai.submit_notes(file_path=file_path, title=row.title)
+                    job_id = ai.submit_notes(
+                        file_path=file_path, title=row.title, language="zh"
+                    )
                 except AIClientError as exc:
                     logger.warning("ai submit failed for video %s: %s", row.id, exc)
                     continue
@@ -183,6 +195,18 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
                     v.ai_status = "done"
                     v.notes_json = json.dumps(payload, ensure_ascii=False)
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
+                    # Persist to disk while we still have the row data —
+                    # avoids re-fetching to write files.
+                    file_path_snapshot = v.file_path
+                    title_snapshot = v.title
+            if file_path_snapshot:
+                try:
+                    _write_notes_files(file_path_snapshot, title_snapshot, payload)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "wrote notes JSON to DB but disk write failed for video %s: %s",
+                        row.id, exc,
+                    )
             summary["ai_done"] += 1
         elif status == "failed":
             with session_scope() as s:
@@ -190,6 +214,129 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
                 if v is not None:
                     v.ai_status = "failed"
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
+
+
+def _cleanup_temp_dirs(parent: str) -> None:
+    """Remove BBDown's aid-named temp dirs that linger after a successful merge.
+
+    BBDown writes ``<parent>/<aid>/*.vclip`` while downloading, then merges
+    them into ``<parent>/<videoTitle>.mp4``. On a clean exit it removes the
+    temp dir; on partial failures it leaves them, which clutters the Files
+    page. We sweep any all-numeric subdirs of ``parent`` that look like
+    that pattern.
+    """
+    if not parent or not os.path.isdir(parent):
+        return
+    try:
+        for name in os.listdir(parent):
+            if not name.isdigit():
+                continue
+            sub = os.path.join(parent, name)
+            if not os.path.isdir(sub):
+                continue
+            # Confirm shape: contains only .vclip / .jpg / numeric files
+            try:
+                contents = os.listdir(sub)
+            except OSError:
+                continue
+            if not contents:
+                shutil.rmtree(sub, ignore_errors=True)
+                continue
+            ok = all(
+                f.endswith((".vclip", ".jpg", ".aclip", ".m4s")) or f.startswith("0000")
+                for f in contents
+            )
+            if ok:
+                shutil.rmtree(sub, ignore_errors=True)
+                logger.debug("cleaned BBDown temp dir: %s", sub)
+    except OSError as exc:
+        logger.warning("temp dir cleanup failed under %s: %s", parent, exc)
+
+
+def _format_section(idx: int, section: dict[str, Any]) -> str:
+    title = section.get("title") or f"Section {idx}"
+    timestamp = section.get("timestamp")
+    summary = section.get("summary")
+    details = section.get("details")
+    key_points = section.get("key_points") or []
+    parts: list[str] = [f"### {idx}. {title}"]
+    if timestamp:
+        parts.append(f"_{timestamp}_")
+    if summary:
+        parts.append(summary)
+    if details:
+        parts.append(details)
+    if key_points:
+        parts.append("")
+        parts.extend(f"- {p}" for p in key_points)
+    return "\n\n".join(parts).strip()
+
+
+def _render_notes_md(title: str, payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or ""
+    key_topics = payload.get("key_topics") or []
+    sections = payload.get("sections") or []
+    mindmap = (payload.get("mindmap") or "").strip()
+
+    out: list[str] = [f"# {title}", ""]
+
+    if summary:
+        out.extend(["## 总结", "", summary, ""])
+
+    if key_topics:
+        out.append("## 核心主题")
+        out.append("")
+        out.extend(f"- {t}" for t in key_topics)
+        out.append("")
+
+    if sections:
+        out.append("## 章节笔记")
+        out.append("")
+        for i, sec in enumerate(sections, 1):
+            out.append(_format_section(i, sec))
+            out.append("")
+
+    if mindmap:
+        out.append("## 思维导图")
+        out.append("")
+        out.append("```mermaid")
+        out.append(mindmap)
+        out.append("```")
+        out.append("")
+
+    return "\n".join(out).rstrip() + "\n"
+
+
+def _write_notes_files(file_path: str, title: str, payload: dict[str, Any]) -> None:
+    """Drop ``notes.md`` + ``transcript.txt`` next to ``file_path``.
+
+    Using fixed names (notes.md, transcript.txt) makes them easy to find
+    and consistent across creators. The mp4's basename is preserved as-is
+    in the same dir; users can delete the mp4 and keep the notes (which
+    is exactly the workflow request — "有时候我们只存笔记就够用了").
+    """
+    parent = os.path.dirname(file_path)
+    if not parent or not os.path.isdir(parent):
+        # mp4 file disappeared (user deleted it?) — just bail
+        logger.info("skipped notes write: parent dir missing for %s", file_path)
+        return
+
+    md_path = os.path.join(parent, "notes.md")
+    transcript_path = os.path.join(parent, "transcript.txt")
+
+    try:
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(_render_notes_md(title, payload))
+    except OSError as exc:
+        logger.warning("could not write %s: %s", md_path, exc)
+
+    transcript = payload.get("transcript") or ""
+    if transcript:
+        try:
+            with open(transcript_path, "w", encoding="utf-8") as f:
+                f.write(transcript)
+        except OSError as exc:
+            logger.warning("could not write %s: %s", transcript_path, exc)
 
 
 def _resolve_file_path(data: dict) -> Optional[str]:

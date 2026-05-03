@@ -1,5 +1,16 @@
 import { restfulClient, RESTFUL_API_URL } from "./client";
 
+export type FileKind =
+  | "folder"
+  | "video"
+  | "audio"
+  | "image"
+  | "subtitle"
+  | "note"
+  | "transcript"
+  | "text"
+  | "other";
+
 export interface FileEntry {
   name: string;
   path: string;
@@ -7,6 +18,7 @@ export interface FileEntry {
   size: number;
   modifiedAt: string;
   ext: string;
+  kind: FileKind;
 }
 
 export interface FilesListResponse {
@@ -22,6 +34,7 @@ type RawFileEntry = {
   size: number;
   modified_at: string;
   ext: string;
+  kind?: FileKind;
 };
 
 type RawFilesListResponse = {
@@ -29,6 +42,26 @@ type RawFilesListResponse = {
   parent: string | null;
   entries: RawFileEntry[];
 };
+
+function classify(name: string, isDir: boolean, ext: string): FileKind {
+  // Server already classifies; this is a fallback for older API responses.
+  if (isDir) return "folder";
+  if (name === "notes.md") return "note";
+  if (name === "transcript.txt" || name === "transcript.srt")
+    return "transcript";
+  const e = ext.toLowerCase();
+  if ([".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv"].includes(e))
+    return "video";
+  if ([".mp3", ".m4a", ".wav", ".flac", ".aac", ".ogg"].includes(e))
+    return "audio";
+  if ([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"].includes(e))
+    return "image";
+  if ([".srt", ".vtt", ".ass"].includes(e)) return "subtitle";
+  if (e === ".md") return "note";
+  if (e === ".txt") return "transcript";
+  if ([".log", ".json"].includes(e)) return "text";
+  return "other";
+}
 
 function adapt(raw: RawFileEntry): FileEntry {
   return {
@@ -38,16 +71,24 @@ function adapt(raw: RawFileEntry): FileEntry {
     size: raw.size,
     modifiedAt: raw.modified_at,
     ext: raw.ext,
+    kind: raw.kind ?? classify(raw.name, raw.is_dir, raw.ext),
   };
 }
 
-export async function listFiles(dirPath = ""): Promise<FilesListResponse> {
+export async function listFiles(
+  dirPath = "",
+  options: { kind?: FileKind | "all" | FileKind[] } = {},
+): Promise<FilesListResponse> {
   // restfulClient's axios interceptor already unwraps the {success,data}
   // envelope to the inner data, so the response is the raw payload
-  // ({cwd, parent, entries}). Earlier we accessed .data.data.cwd which
-  // double-unwraps and lands on undefined.
+  // ({cwd, parent, entries}).
+  const params: Record<string, string> = { path: dirPath };
+  const k = options.kind;
+  if (k && k !== "all") {
+    params.kind = Array.isArray(k) ? k.join(",") : k;
+  }
   const { data } = await restfulClient.get<RawFilesListResponse>("/api/files", {
-    params: { path: dirPath },
+    params,
   });
   return {
     cwd: data.cwd,

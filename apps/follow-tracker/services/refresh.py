@@ -50,10 +50,11 @@ def refresh_creator(creator_id: int, mediago: "MediagoClient | None" = None) -> 
         external_id = c.external_id
         creator_name = c.name
         auto_download = bool(c.auto_download)
+        cookies = c.cookies
 
     try:
         consecutive_dupes = 0
-        for video in fetch_latest(platform, external_id):
+        for video in fetch_latest(platform, external_id, cookies=cookies):
             with session_scope() as s:
                 existing = find_video(s, creator_id, video.external_id)
                 if existing:
@@ -85,11 +86,18 @@ def refresh_creator(creator_id: int, mediago: "MediagoClient | None" = None) -> 
 
             if auto_download and mediago is not None:
                 try:
+                    safe_title = safe_segment(video.title)
                     download_id = mediago.enqueue(
                         url=video.url,
                         download_type=_download_type_for(platform),
-                        name=_safe_name(creator_name, video.title),
-                        folder=creator_name,
+                        # name → BBDown's --file-pattern: just the title; with
+                        # the per-video folder below this gives us
+                        # /downloads/<creator>/<title>/<title>.{mp4,…}
+                        name=safe_title,
+                        # folder → BBDown's --work-dir suffix; we stash one
+                        # level deep so the merged file, AI notes, transcript
+                        # all live in the same per-video subdir.
+                        folder=f"{safe_segment(creator_name)}/{safe_title}",
                         start=True,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -131,14 +139,23 @@ def _download_type_for(platform: str) -> str:
     raise ValueError(f"unsupported platform: {platform}")
 
 
-def _safe_name(creator: str, title: str) -> str:
-    """Produce a filesystem-friendly-ish output name. mediago-core feeds it
-    to BBDown / yt-dlp / N_m3u8DL-RE which all do their own sanitization,
-    so we only strip the most obviously hostile characters."""
-    raw = f"{creator} - {title}".strip()
+def safe_segment(name: str) -> str:
+    """Sanitize a single path segment (creator name OR video title).
+
+    Strips characters that bork Linux/Windows filesystems, collapses
+    slashes (so a single segment doesn't unexpectedly create subdirs),
+    and caps length so the downloader has headroom for its own extension
+    + temp file suffixes.
+    """
+    raw = (name or "").strip()
     bad = '<>:"\\|?*\n\r\t'
     out = "".join("_" if c in bad else c for c in raw)
-    # Slashes are intentionally kept out of "bad" because BBDown's
-    # --file-pattern uses them as path separators; collapse them anyway.
     out = out.replace("/", "_")
-    return out[:200]  # leave headroom for the downloader to add extensions
+    return out[:180] or "untitled"
+
+
+# Backwards compat — older imports may still reference _safe_name. Now
+# returns a single safe segment built from just the title (creator goes
+# into the folder path, not the filename).
+def _safe_name(creator: str, title: str) -> str:  # noqa: ARG001
+    return safe_segment(title)

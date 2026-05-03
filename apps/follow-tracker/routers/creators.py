@@ -46,6 +46,7 @@ def list_creators() -> CreatorListResponse:
                     external_id=c.external_id,
                     name=c.name,
                     auto_download=bool(c.auto_download),
+                    has_cookies=bool((c.cookies or "").strip()),
                     last_checked_at=c.last_checked_at,
                     last_error=c.last_error,
                     created_at=c.created_at,
@@ -60,6 +61,7 @@ def add_creator(body: CreatorIn) -> CreatorOut:
     platform = body.platform
     external_id = (body.external_id or "").strip()
     name = (body.name or "").strip()
+    cookies = (body.cookies or "").strip() or None
 
     if platform == "bilibili":
         # Accept either a mid or a free-form name in either field.
@@ -67,7 +69,9 @@ def add_creator(body: CreatorIn) -> CreatorOut:
         if not candidate:
             raise HTTPException(status_code=400, detail="provide externalId (mid) or name")
         try:
-            mid, resolved = resolve_bilibili_creator(candidate)
+            # Resolve with the same cookies we'll persist — risk-control
+            # rejects the resolve API as readily as the search API.
+            mid, resolved = resolve_bilibili_creator(candidate, cookies=cookies)
         except SourceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         external_id = mid
@@ -92,6 +96,7 @@ def add_creator(body: CreatorIn) -> CreatorOut:
             external_id=external_id,
             name=name,
             auto_download=1 if body.auto_download else 0,
+            cookies=cookies,
         )
         s.add(c)
         s.flush()
@@ -101,6 +106,7 @@ def add_creator(body: CreatorIn) -> CreatorOut:
             external_id=c.external_id,
             name=c.name,
             auto_download=bool(c.auto_download),
+            has_cookies=bool(c.cookies),
             last_checked_at=c.last_checked_at,
             last_error=c.last_error,
             created_at=c.created_at,
@@ -118,6 +124,10 @@ def patch_creator(creator_id: int, body: CreatorPatch) -> CreatorOut:
             c.name = body.name
         if body.auto_download is not None:
             c.auto_download = 1 if body.auto_download else 0
+        if body.cookies is not None:
+            # Empty string clears; otherwise replace.
+            stripped = body.cookies.strip()
+            c.cookies = stripped or None
         s.flush()
         count = s.scalar(select(func.count(Video.id)).where(Video.creator_id == c.id)) or 0
         return CreatorOut(
@@ -126,6 +136,7 @@ def patch_creator(creator_id: int, body: CreatorPatch) -> CreatorOut:
             external_id=c.external_id,
             name=c.name,
             auto_download=bool(c.auto_download),
+            has_cookies=bool(c.cookies),
             last_checked_at=c.last_checked_at,
             last_error=c.last_error,
             created_at=c.created_at,

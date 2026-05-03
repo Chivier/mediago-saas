@@ -39,6 +39,10 @@ export interface Creator {
   externalId: string;
   name: string;
   autoDownload: boolean;
+  // Server never returns the cookie string itself, only whether one is
+  // configured — so the UI can show a "cookies set" indicator without
+  // leaking SESSDATA into the React Query cache.
+  hasCookies: boolean;
   lastCheckedAt: string | null;
   lastError: string | null;
   createdAt: string;
@@ -110,6 +114,7 @@ export async function addCreator(payload: {
   externalId?: string;
   name?: string;
   autoDownload?: boolean;
+  cookies?: string;
 }): Promise<Creator> {
   const { data } = await followClient.post<Creator>("/api/creators", payload);
   return data;
@@ -117,7 +122,8 @@ export async function addCreator(payload: {
 
 export async function patchCreator(
   id: number,
-  payload: { name?: string; autoDownload?: boolean },
+  // ``cookies: ""`` clears the stored value; ``undefined`` leaves it alone.
+  payload: { name?: string; autoDownload?: boolean; cookies?: string },
 ): Promise<Creator> {
   const { data } = await followClient.patch<Creator>(
     `/api/creators/${id}`,

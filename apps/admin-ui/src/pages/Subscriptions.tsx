@@ -11,6 +11,7 @@ import {
   Download as DownloadIcon,
   X as XIcon,
   ExternalLink,
+  KeyRound,
 } from "lucide-react";
 
 import {
@@ -24,6 +25,7 @@ import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { Textarea } from "../components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -77,6 +79,7 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
   const [externalId, setExternalId] = useState("");
   const [name, setName] = useState("");
   const [autoDownload, setAutoDownload] = useState(true);
+  const [cookies, setCookies] = useState("");
 
   const mutation = useMutation({
     mutationFn: addCreator,
@@ -85,6 +88,7 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
       setExternalId("");
       setName("");
       setAutoDownload(true);
+      setCookies("");
       onAdded();
     },
   });
@@ -99,6 +103,7 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
       externalId: trimmedExternal || undefined,
       name: trimmedName || undefined,
       autoDownload,
+      cookies: cookies.trim() || undefined,
     });
   };
 
@@ -181,6 +186,32 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
               Auto-queue new uploads at mediago-core
             </Label>
           </div>
+          {platform === "bilibili" && (
+            <div className="space-y-2">
+              <Label htmlFor="sub-cookies">
+                Cookies{" "}
+                <span className="font-normal text-muted-foreground">
+                  (optional — needed for risk-control bypass and paid videos)
+                </span>
+              </Label>
+              <Textarea
+                id="sub-cookies"
+                placeholder="SESSDATA=xxx; bili_jct=yyy; buvid3=zzz; ..."
+                rows={3}
+                value={cookies}
+                onChange={(e) => setCookies(e.target.value)}
+                className="font-mono text-xs"
+              />
+              <p className="text-xs text-muted-foreground">
+                Open bilibili.com in a logged-in browser → DevTools →
+                Application → Cookies → copy the whole row as
+                <code className="mx-1 rounded bg-muted px-1">
+                  k=v; k=v; ...
+                </code>
+                . SESSDATA + bili_jct are the most important.
+              </p>
+            </div>
+          )}
           {mutation.isError && (
             <div className="flex items-center gap-2 text-sm text-destructive">
               <AlertCircle size={14} />
@@ -203,6 +234,127 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
                 <Plus size={14} />
               )}
               Add
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Per-creator cookies editor ────────────────────────────────────────────────
+
+function EditCookiesDialog({
+  creator,
+  onSaved,
+}: {
+  creator: Creator;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // We never load existing cookies from the server (the API doesn't echo
+  // them back). Empty input on open means "leave alone unless I type
+  // something or hit Clear".
+  const [cookies, setCookies] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: (value: string) => patchCreator(creator.id, { cookies: value }),
+    onSuccess: () => {
+      setOpen(false);
+      setCookies("");
+      onSaved();
+    },
+  });
+
+  const save = (e: React.FormEvent) => {
+    e.preventDefault();
+    mutation.mutate(cookies.trim());
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) {
+          mutation.reset();
+          setCookies("");
+        }
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Edit cookies"
+          title={
+            creator.hasCookies
+              ? "Cookies configured — click to update"
+              : "Set cookies (needed for paid videos / risk-control bypass)"
+          }
+        >
+          <KeyRound
+            size={14}
+            className={creator.hasCookies ? "text-emerald-600" : ""}
+          />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cookies for {creator.name}</DialogTitle>
+          <DialogDescription>
+            {creator.platform === "bilibili"
+              ? "Paste a logged-in cookie row (SESSDATA + bili_jct minimum). Required to download paid/member-only videos and to dodge risk-control on space queries."
+              : "Auth cookies for this creator's source platform."}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={save} className="space-y-3">
+          <Textarea
+            placeholder={
+              creator.hasCookies
+                ? "(currently configured — paste a new value to replace, or leave empty + click Clear to remove)"
+                : "SESSDATA=xxx; bili_jct=yyy; buvid3=zzz; ..."
+            }
+            rows={5}
+            value={cookies}
+            onChange={(e) => setCookies(e.target.value)}
+            className="font-mono text-xs"
+            autoFocus
+          />
+          {mutation.isError && (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle size={14} />
+              {(mutation.error as Error).message}
+            </div>
+          )}
+          <DialogFooter className="gap-2">
+            {creator.hasCookies && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => mutation.mutate("")}
+                disabled={mutation.isPending}
+                className="text-destructive"
+              >
+                Clear cookies
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={mutation.isPending || !cookies.trim()}
+            >
+              {mutation.isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : null}
+              Save
             </Button>
           </DialogFooter>
         </form>
@@ -552,6 +704,9 @@ function CreatorRow({
             className="flex items-center justify-end gap-1"
             onClick={(e) => e.stopPropagation()}
           >
+            {creator.platform === "bilibili" && (
+              <EditCookiesDialog creator={creator} onSaved={onChange} />
+            )}
             <Button
               variant="ghost"
               size="icon"

@@ -29,7 +29,7 @@ class AIClient:
     def close(self) -> None:
         self._client.close()
 
-    def submit_notes(self, *, file_path: str, title: Optional[str] = None, language: str = "auto") -> str:
+    def submit_notes(self, *, file_path: str, title: Optional[str] = None, language: str = "zh") -> str:
         body: dict[str, Any] = {"file_path": file_path, "language": language}
         if title:
             body["title"] = title

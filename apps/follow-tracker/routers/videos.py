@@ -82,13 +82,14 @@ def queue_video(video_id: int) -> VideoOut:
             title = v.title
             creator_name = v.creator.name
 
-        from services.refresh import _download_type_for, _safe_name  # local import to avoid cycle
+        from services.refresh import _download_type_for, safe_segment  # local import to avoid cycle
 
+        safe_title = safe_segment(title)
         download_id = mediago.enqueue(
             url=url,
             download_type=_download_type_for(platform),
-            name=_safe_name(creator_name, title),
-            folder=creator_name,
+            name=safe_title,
+            folder=f"{safe_segment(creator_name)}/{safe_title}",
             start=True,
         )
         with session_scope() as s:

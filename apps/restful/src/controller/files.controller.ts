@@ -8,6 +8,20 @@ import { DOWNLOAD_DIR } from "../constants";
 import { success, error } from "../utils";
 import Logger from "../services/logger.service";
 
+// Loose kind buckets exposed to the UI so the Files page can filter
+// "show only notes" / "show only videos" without re-deriving from the
+// extension client-side.
+type FileKind =
+  | "folder"
+  | "video"
+  | "audio"
+  | "image"
+  | "subtitle"
+  | "note"
+  | "transcript"
+  | "text"
+  | "other";
+
 interface FileEntry {
   name: string;
   path: string;
@@ -15,12 +29,76 @@ interface FileEntry {
   size: number;
   modified_at: string;
   ext: string;
+  kind: FileKind;
 }
 
 interface FilesListResponse {
   cwd: string;
   parent: string | null;
   entries: FileEntry[];
+}
+
+const KIND_BY_EXT: Record<string, FileKind> = {
+  ".mp4": "video",
+  ".mkv": "video",
+  ".webm": "video",
+  ".mov": "video",
+  ".m4v": "video",
+  ".avi": "video",
+  ".flv": "video",
+  ".mp3": "audio",
+  ".m4a": "audio",
+  ".wav": "audio",
+  ".flac": "audio",
+  ".aac": "audio",
+  ".ogg": "audio",
+  ".srt": "subtitle",
+  ".vtt": "subtitle",
+  ".ass": "subtitle",
+  ".png": "image",
+  ".jpg": "image",
+  ".jpeg": "image",
+  ".webp": "image",
+  ".gif": "image",
+  ".bmp": "image",
+  ".md": "note",
+  ".txt": "transcript",
+  ".log": "text",
+  ".json": "text",
+};
+
+function classifyKind(name: string, isDir: boolean): FileKind {
+  if (isDir) return "folder";
+  const ext = path.extname(name).toLowerCase();
+  // The follow-tracker writes "transcript.txt" for ASR output; promote
+  // anything literally named that to a dedicated bucket so the UI can
+  // distinguish it from generic text files.
+  if (name === "transcript.txt" || name === "transcript.srt")
+    return "transcript";
+  if (name === "notes.md") return "note";
+  return KIND_BY_EXT[ext] ?? "other";
+}
+
+function parseKindFilter(raw: string): Set<FileKind> | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed || trimmed === "all") return null;
+  const valid: FileKind[] = new Set([
+    "folder",
+    "video",
+    "audio",
+    "image",
+    "subtitle",
+    "note",
+    "transcript",
+    "text",
+    "other",
+  ]);
+  const wanted = new Set<FileKind>();
+  for (const tok of trimmed.split(",")) {
+    const t = tok.trim() as FileKind;
+    if (valid.has(t)) wanted.add(t);
+  }
+  return wanted.size > 0 ? wanted : null;
 }
 
 const PREVIEW_EXTS = new Set([
@@ -86,7 +164,10 @@ export default class FilesController {
   }
 
   register(router: Router): void {
-    // GET /api/files?path=relative/dir → list directory contents
+    // GET /api/files?path=relative/dir[&kind=note|video|...]
+    //   path  — directory to list, relative to STORAGE_PATH
+    //   kind  — optional filter; comma-separated for multi-select
+    //           (e.g. ?kind=note,transcript) or "all" / omitted for everything
     router.get("/files", async (ctx) => {
       const relPath = String(ctx.query.path ?? "");
       const safe = await this.resolveSafe(relPath);
@@ -109,6 +190,8 @@ export default class FilesController {
         return;
       }
 
+      const kindFilter = parseKindFilter(String(ctx.query.kind ?? ""));
+
       const dirents = await fs.readdir(safe, { withFileTypes: true });
       const entries: FileEntry[] = [];
       for (const d of dirents) {
@@ -120,6 +203,13 @@ export default class FilesController {
             .relative(DOWNLOAD_DIR, full)
             .split(path.sep)
             .join("/");
+          const kind = classifyKind(d.name, s.isDirectory());
+          // Folders always pass the filter — otherwise selecting "notes"
+          // would prevent the user from drilling into per-video subdirs
+          // where the notes actually live.
+          if (kindFilter && kind !== "folder" && !kindFilter.has(kind)) {
+            continue;
+          }
           entries.push({
             name: d.name,
             path: rel,
@@ -127,6 +217,7 @@ export default class FilesController {
             size: s.isDirectory() ? 0 : s.size,
             modified_at: s.mtime.toISOString(),
             ext: s.isDirectory() ? "" : path.extname(d.name).toLowerCase(),
+            kind,
           });
         } catch {
           // Skip files we can't stat (broken symlinks, races)

@@ -30,7 +30,9 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    inspect,
     select,
+    text,
 )
 from sqlalchemy.orm import (
     DeclarativeBase,
@@ -61,6 +63,11 @@ class Creator(Base):
     external_id: Mapped[str] = mapped_column(String(64), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     auto_download: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    # Optional per-creator auth cookies. Bilibili's risk-control rejects
+    # anonymous WBI calls and paid videos require a logged-in SESSDATA;
+    # stored as the raw "k=v; k=v" cookie string the user pastes from
+    # browser DevTools so we don't tie the format to one platform.
+    cookies: Mapped[Optional[str]] = mapped_column(Text)
     last_checked_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
@@ -104,6 +111,23 @@ _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False)
 
 def init_db() -> None:
     Base.metadata.create_all(_engine)
+    _migrate()
+
+
+def _migrate() -> None:
+    """Best-effort additive migrations for older SQLite files.
+
+    SQLAlchemy's create_all only creates missing tables; new columns on
+    existing tables need an explicit ALTER. Idempotent — safe to run on
+    every startup.
+    """
+    inspector = inspect(_engine)
+    if "creators" not in inspector.get_table_names():
+        return
+    have = {col["name"] for col in inspector.get_columns("creators")}
+    with _engine.begin() as conn:
+        if "cookies" not in have:
+            conn.execute(text("ALTER TABLE creators ADD COLUMN cookies TEXT"))
 
 
 @contextmanager

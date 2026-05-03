@@ -18,6 +18,7 @@ class CreatorIn(BaseModel):
     external_id: Optional[str] = Field(default=None, alias="externalId")
     name: Optional[str] = None
     auto_download: bool = Field(default=True, alias="autoDownload")
+    cookies: Optional[str] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -25,6 +26,8 @@ class CreatorIn(BaseModel):
 class CreatorPatch(BaseModel):
     name: Optional[str] = None
     auto_download: Optional[bool] = Field(default=None, alias="autoDownload")
+    # ``""`` clears stored cookies; ``None`` leaves them alone.
+    cookies: Optional[str] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -35,6 +38,10 @@ class CreatorOut(BaseModel):
     external_id: str = Field(serialization_alias="externalId")
     name: str
     auto_download: bool = Field(serialization_alias="autoDownload")
+    # We never echo cookie values back — only whether one is set, so the
+    # UI can show a "cookies configured" indicator without exposing
+    # SESSDATA on every creators-list refresh.
+    has_cookies: bool = Field(default=False, serialization_alias="hasCookies")
     last_checked_at: Optional[dt.datetime] = Field(default=None, serialization_alias="lastCheckedAt")
     last_error: Optional[str] = Field(default=None, serialization_alias="lastError")
     created_at: dt.datetime = Field(serialization_alias="createdAt")

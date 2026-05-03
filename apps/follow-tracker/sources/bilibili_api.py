@@ -2,15 +2,15 @@
 
 This is the lighter primary source for Bilibili. It calls
 ``api.bilibili.com/x/space/wbi/arc/search`` with the WBI ``w_rid`` /
-``wts`` signature B站 added in 2023. Everything documented at
-https://github.com/SocialSisterYi/bilibili-API-collect is implemented
-inline here so we avoid pulling in the full ``bilibili-api-python``
-async stack.
+``wts`` signature B站 added in 2023, plus the ``dm_img_*`` device
+fingerprint params B站 added in 2024 to gate risk-control.
 
-Cookies — including ``buvid3``, ``b_nut`` and ``bili_ticket`` — are
-fetched on-demand from the public homepage. If the user has supplied a
-``BILI_SESSDATA`` for a logged-in session it gets layered in too, which
-significantly improves the per-IP rate limit.
+Cookies — including ``buvid3``, ``buvid4`` and ``b_nut`` — are
+fetched on-demand from the public homepage and the
+``/x/frontend/finger/spi`` endpoint. If the caller supplies a cookies
+dict (from a logged-in session: ``SESSDATA``, ``bili_jct``,
+``bili_ticket``, etc.) it gets layered on top, which both bypasses the
+risk-control gate and unlocks paid-video metadata.
 
 Failure modes that should fall back to Selenium:
 
@@ -26,11 +26,11 @@ import logging
 import os
 import time
 import urllib.parse
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 
 import httpx
 
-from .base import DiscoveredVideo, SourceError
+from .base import DiscoveredVideo, SourceError, parse_cookies
 
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 NAV_URL = "https://api.bilibili.com/x/web-interface/nav"
 SEARCH_URL = "https://api.bilibili.com/x/space/wbi/arc/search"
 USER_INFO_URL = "https://api.bilibili.com/x/space/wbi/acc/info"
+SPI_URL = "https://api.bilibili.com/x/frontend/finger/spi"
 HOME_URL = "https://www.bilibili.com"
 
 # WBI mixin permutation — fixed indices the official client uses to
@@ -60,7 +61,18 @@ def _user_agent() -> str:
     )
 
 
-def _build_client() -> httpx.Client:
+def _resolve_cookies(extra: Optional[Mapping[str, str]]) -> dict[str, str]:
+    """Merge env-level + per-creator cookies. Per-creator wins."""
+    merged: dict[str, str] = {}
+    sessdata = os.getenv("BILI_SESSDATA")
+    if sessdata:
+        merged["SESSDATA"] = sessdata
+    if extra:
+        merged.update({k: v for k, v in extra.items() if k and v})
+    return merged
+
+
+def _build_client(cookies: Optional[Mapping[str, str]] = None) -> httpx.Client:
     headers = {
         "User-Agent": _user_agent(),
         "Accept": "application/json, text/plain, */*",
@@ -68,11 +80,9 @@ def _build_client() -> httpx.Client:
         "Origin": "https://space.bilibili.com",
         "Referer": "https://space.bilibili.com/",
     }
-    sessdata = os.getenv("BILI_SESSDATA")
-    if sessdata:
-        headers["Cookie"] = f"SESSDATA={sessdata}"
     return httpx.Client(
         headers=headers,
+        cookies=dict(cookies) if cookies else None,
         timeout=20,
         follow_redirects=True,
         # cookies persist across requests in the same client; we hit the
@@ -81,11 +91,33 @@ def _build_client() -> httpx.Client:
 
 
 def _warmup(client: httpx.Client) -> None:
-    """Hit the homepage so the server hands us its anti-bot cookies."""
+    """Hit the homepage + spi endpoint so the server hands us its anti-bot cookies.
+
+    The spi endpoint returns ``data.b_3`` and ``data.b_4`` which we install
+    as ``buvid3`` / ``buvid4`` cookies — recent risk-control checks reject
+    requests where these are missing, even with a valid SESSDATA.
+    """
     try:
         client.get(HOME_URL)
     except httpx.HTTPError as exc:
         logger.debug("warmup home fetch failed (non-fatal): %s", exc)
+
+    # Only spi-warm cookies the homepage didn't already set; buvid3/buvid4
+    # from the homepage are preferred since they're tied to that session.
+    if "buvid3" in client.cookies and "buvid4" in client.cookies:
+        return
+    try:
+        r = client.get(SPI_URL)
+        r.raise_for_status()
+        data = (r.json() or {}).get("data") or {}
+        b3 = data.get("b_3")
+        b4 = data.get("b_4")
+        if b3 and "buvid3" not in client.cookies:
+            client.cookies.set("buvid3", b3, domain=".bilibili.com")
+        if b4 and "buvid4" not in client.cookies:
+            client.cookies.set("buvid4", b4, domain=".bilibili.com")
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.debug("spi warmup failed (non-fatal): %s", exc)
 
 
 def _get_wbi_keys(client: httpx.Client) -> tuple[str, str]:
@@ -115,8 +147,24 @@ def _mixin_key(img_key: str, sub_key: str) -> str:
     return permuted[:32]
 
 
+# Device-fingerprint placeholders. The real client computes these from the
+# canvas/webgl fingerprint of the browser; risk-control only checks they
+# are well-formed and present, so static dummies sail through.
+_DM_IMG_LIST = "[]"
+_DM_IMG_STR = "V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4w"
+_DM_COVER_IMG_STR = (
+    "QU5HTEUgKEludGVsLCBJbnRlbChSKSBVSEQgR3JhcGhpY3MgNjMwIERpcmVjdDNEMTEgdnNfNV8wIHBzXzVfMCksIG9wZW5nbCAuMyAuMQ"
+)
+_DM_IMG_INTER = '{"ds":[],"wh":[3071,1727,24],"of":[12,24,12]}'
+
+
 def _sign(params: dict[str, Any], mixin: str) -> dict[str, Any]:
     params = dict(params)
+    # dm_img_* are required for the WBI risk-control gate (added 2024).
+    params.setdefault("dm_img_list", _DM_IMG_LIST)
+    params.setdefault("dm_img_str", _DM_IMG_STR)
+    params.setdefault("dm_cover_img_str", _DM_COVER_IMG_STR)
+    params.setdefault("dm_img_inter", _DM_IMG_INTER)
     params["wts"] = int(time.time())
     # Sort keys, then strip characters B站 disallows in values.
     items = sorted(params.items(), key=lambda kv: kv[0])
@@ -139,8 +187,13 @@ def _is_risk_control(payload: dict[str, Any]) -> bool:
 class BilibiliApiSource:
     """Direct WBI-signed access to ``api.bilibili.com``."""
 
+    def __init__(self, cookies: Optional[Mapping[str, str] | str] = None) -> None:
+        if isinstance(cookies, str):
+            cookies = parse_cookies(cookies)
+        self._cookies = _resolve_cookies(cookies)
+
     def fetch(self, mid: str, *, max_pages: int = 5) -> Iterator[DiscoveredVideo]:
-        with _build_client() as client:
+        with _build_client(self._cookies) as client:
             _warmup(client)
             try:
                 img_key, sub_key = _get_wbi_keys(client)
@@ -210,7 +263,7 @@ class BilibiliApiSource:
         if not mid_or_name.isdigit():
             raise SourceError("API source can only resolve numeric mids")
 
-        with _build_client() as client:
+        with _build_client(self._cookies) as client:
             _warmup(client)
             img_key, sub_key = _get_wbi_keys(client)
             mixin = _mixin_key(img_key, sub_key)

@@ -29,7 +29,7 @@ import random
 import re
 import time
 from contextlib import contextmanager
-from typing import Iterator, Optional, Tuple
+from typing import Iterator, Mapping, Optional, Tuple
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
@@ -42,7 +42,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from config import CHROMEDRIVER_PATH
 
-from .base import DiscoveredVideo, SourceError
+from .base import DiscoveredVideo, SourceError, parse_cookies
 
 
 logger = logging.getLogger(__name__)
@@ -82,8 +82,19 @@ def _user_agent() -> str:
     )
 
 
+def _resolve_cookies(extra: Optional[Mapping[str, str]]) -> dict[str, str]:
+    """Merge env-level + per-creator cookies. Per-creator wins."""
+    merged: dict[str, str] = {}
+    sessdata = os.getenv("BILI_SESSDATA")
+    if sessdata:
+        merged["SESSDATA"] = sessdata
+    if extra:
+        merged.update({k: v for k, v in extra.items() if k and v})
+    return merged
+
+
 @contextmanager
-def _browser():
+def _browser(cookies: Optional[Mapping[str, str]] = None):
     options = webdriver.ChromeOptions()
     options.add_argument("--headless=new")
     options.add_argument("--window-size=1920,1080")
@@ -109,24 +120,28 @@ def _browser():
     except Exception as exc:  # noqa: BLE001
         logger.warning("CDP stealth injection failed: %s", exc)
 
-    # Optional: pre-seed a SESSDATA cookie for users who supplied one.
-    # Cookies must be set after a navigation to the matching domain, so
-    # we hit the home page once and then attach the cookie.
-    sessdata = os.getenv("BILI_SESSDATA")
-    if sessdata:
+    # Pre-seed cookies (env BILI_SESSDATA + per-creator overrides). Cookies
+    # must be set after a navigation to the matching domain, so we hit the
+    # home page once and then attach each cookie. ``bili_jct`` is the CSRF
+    # token mate to ``SESSDATA`` and unlocks paid-video metadata.
+    cookie_jar = _resolve_cookies(cookies)
+    if cookie_jar:
         try:
             driver.get("https://www.bilibili.com")
-            driver.add_cookie({
-                "name": "SESSDATA",
-                "value": sessdata,
-                "domain": ".bilibili.com",
-                "path": "/",
-                "secure": True,
-                "httpOnly": True,
-            })
-            logger.info("attached BILI_SESSDATA cookie")
+            for name, value in cookie_jar.items():
+                try:
+                    driver.add_cookie({
+                        "name": name,
+                        "value": value,
+                        "domain": ".bilibili.com",
+                        "path": "/",
+                        "secure": True,
+                    })
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("cookie %s attach failed: %s", name, exc)
+            logger.info("attached %d Bilibili cookie(s): %s", len(cookie_jar), ",".join(cookie_jar))
         except Exception as exc:  # noqa: BLE001
-            logger.warning("BILI_SESSDATA cookie attach failed: %s", exc)
+            logger.warning("cookie pre-seed failed: %s", exc)
 
     try:
         yield driver
@@ -145,13 +160,18 @@ def _on_captcha_page(driver) -> bool:
 class BilibiliSeleniumSource:
     """Browser-driven crawler for ``space.bilibili.com``."""
 
+    def __init__(self, cookies: Optional[Mapping[str, str] | str] = None) -> None:
+        if isinstance(cookies, str):
+            cookies = parse_cookies(cookies)
+        self._cookies = cookies or None
+
     def fetch(self, mid: str, *, max_pages: int = 5) -> Iterator[DiscoveredVideo]:
         """Yield videos from the UP's space, newest first.
 
         Stops after ``max_pages`` pages. Caller is expected to break early
         when consecutive duplicates are seen — handled in ``services.refresh``.
         """
-        with _browser() as driver:
+        with _browser(self._cookies) as driver:
             driver.get(SPACE_VIDEOS_URL.format(mid=mid))
 
             if _on_captcha_page(driver):
@@ -206,7 +226,7 @@ class BilibiliSeleniumSource:
         return self._search_user(s)
 
     def _nickname_for(self, mid: str) -> str:
-        with _browser() as driver:
+        with _browser(self._cookies) as driver:
             driver.get(SPACE_PROFILE_URL.format(mid=mid))
             try:
                 WebDriverWait(driver, 20).until(
@@ -230,7 +250,7 @@ class BilibiliSeleniumSource:
             return f"User_{mid}"
 
     def _search_user(self, name: str) -> Tuple[str, str]:
-        with _browser() as driver:
+        with _browser(self._cookies) as driver:
             driver.get(SEARCH_USER_URL.format(kw=quote(name)))
             try:
                 WebDriverWait(driver, 25).until(
