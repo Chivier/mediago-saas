@@ -1,4 +1,29 @@
 services:
+  # ── One-shot config renderer ─────────────────────────────────────────────
+  # mediago-core's schema config (apps/core/configs/config.template.json)
+  # has a ${BILI_COOKIE} placeholder that lets BBDown access non-anonymous
+  # streams once the user provides a SESSDATA. Compose can interpolate
+  # env vars in the YAML but not into mounted files, so we rendered it
+  # at startup with a tiny Alpine + envsubst, write to a shared volume,
+  # and let mediago-core mount the result.
+  core-config-init:
+    image: alpine:3.20
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        apk add --no-cache gettext >/dev/null 2>&1 || true
+        export BILI_COOKIE="${BILI_COOKIE:-}"
+        envsubst '$$BILI_COOKIE' < /template/config.template.json > /out/config.json
+        echo "rendered /app/configs/config.json (BILI_COOKIE set: $${BILI_COOKIE:+yes})"
+    environment:
+      BILI_COOKIE: ${BILI_SESSDATA:+SESSDATA=${BILI_SESSDATA}}
+    volumes:
+      - ./apps/core/configs:/template:ro
+      - core-configs:/out
+    restart: "no"
+
   # ── Ollama LLM backend (OpenAI-compatible API, replaces LM Studio) ───────
   ollama:
     image: ollama/ollama:latest
@@ -46,6 +71,13 @@ services:
       - /chivier-disk/mediago-saas/downloads:/downloads
       - /chivier-disk/mediago-saas/core-data:/data
       - /chivier-disk/mediago-saas/core-logs:/logs
+      # Schema overrides (720p preference for YouTube + Bilibili, plus a
+      # baked-in BBDown cookie when BILI_SESSDATA is set). The file is
+      # rendered at compose-up time by core-config-init.
+      - core-configs:/app/configs:ro
+    depends_on:
+      core-config-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # ── TypeScript Koa REST API (apps/restful) ────────────────────────────────
@@ -98,6 +130,41 @@ services:
       - ollama
     restart: unless-stopped
 
+  # ── Subscription tracker (apps/follow-tracker) ───────────────────────────
+  # Watches Bilibili UPs (Selenium) + YouTube channels (RSS / yt-dlp),
+  # auto-queues new uploads at mediago-core, then triggers the AI notes
+  # pipeline once a download completes.
+  mediago-follow:
+    build:
+      context: apps/follow-tracker
+    ports:
+      - "127.0.0.1:8900:8900"
+    environment:
+      PORT: "8900"
+      MEDIAGO_BASE_URL: "http://mediago-core:8080"
+      AI_BASE_URL: "http://mediago-ai:8899"
+      STORAGE_PATH: /downloads
+      DATA_DIR: /data
+      DB_PATH: /data/follow.db
+      POLL_INTERVAL_HOURS: "6"
+      DOWNLOAD_POLL_SECONDS: "60"
+      MAX_PAGES_PER_CREATOR: "5"
+      AUTO_AI_PROCESSING: "true"
+      RUN_AT_STARTUP: "false"
+      # Optional: a SESSDATA cookie from a logged-in bilibili.com browser
+      # session lets the API source bypass anonymous risk-control. Without
+      # it the refresh path will mostly fail with `code=-352 风控校验失败`.
+      # Get the value from DevTools → Application → Cookies → SESSDATA.
+      BILI_SESSDATA: ${BILI_SESSDATA:-}
+    volumes:
+      - /chivier-disk/mediago-saas/downloads:/downloads
+      - /chivier-disk/mediago-saas/follow-data:/data
+    depends_on:
+      - mediago-core
+      - mediago-ai
+    shm_size: "2gb" # headless Chrome needs more shared memory than Docker's 64m default
+    restart: unless-stopped
+
   # ── Admin WebUI (apps/admin-ui, production static build) ─────────────────
   mediago-admin:
     build:
@@ -116,4 +183,11 @@ services:
       - mediago-core
       - mediago-restful
       - mediago-ai
+      - mediago-follow
     restart: unless-stopped
+
+volumes:
+  # Rendered schema config — produced by core-config-init, consumed by
+  # mediago-core. Volume so the file persists across `docker compose down`
+  # without rerunning the init container every time.
+  core-configs:

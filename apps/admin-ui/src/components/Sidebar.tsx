@@ -5,6 +5,7 @@ import {
   FolderOpen,
   ListTodo,
   BrainCircuit,
+  Rss,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -22,6 +23,7 @@ interface SidebarProps {
 
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/subscriptions", label: "Subscriptions", icon: Rss },
   { to: "/downloads", label: "Downloads", icon: Download },
   { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/batch", label: "Batch Tasks", icon: ListTodo },

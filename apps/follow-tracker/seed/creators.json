@@ -1,0 +1,15 @@
+{
+  "_doc": "Initial subscription list. Loaded once on first startup if the creators table is empty. Each entry can supply mid (preferred) or just name; the bootstrapper will resolve names via search.bilibili.com when mid is missing. Edit + restart to add seed creators.",
+  "creators": [
+    { "platform": "bilibili", "name": "木鱼水心" },
+    { "platform": "bilibili", "name": "毕英杰-Johnathan" },
+    { "platform": "bilibili", "name": "天真的和感伤的小说家" },
+    { "platform": "bilibili", "name": "贪狼" },
+    { "platform": "bilibili", "name": "THEODELL" },
+    { "platform": "bilibili", "name": "大问题Dialectic" },
+    { "platform": "bilibili", "name": "Fuji_玫瑰叔" },
+    { "platform": "bilibili", "name": "五道口纳什", "mid": "9964762" },
+    { "platform": "bilibili", "name": "Quaerite" },
+    { "platform": "bilibili", "name": "大门ZRR" }
+  ]
+}

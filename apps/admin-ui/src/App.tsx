@@ -7,6 +7,7 @@ import { Downloads } from "./pages/Downloads";
 import { Files } from "./pages/Files";
 import { BatchTasks } from "./pages/BatchTasks";
 import { AIJobs } from "./pages/AIJobs";
+import { Subscriptions } from "./pages/Subscriptions";
 import { Settings } from "./pages/Settings";
 
 const queryClient = new QueryClient({
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="files" element={<Files />} />
             <Route path="batch" element={<BatchTasks />} />
             <Route path="ai-jobs" element={<AIJobs />} />
+            <Route path="subscriptions" element={<Subscriptions />} />
             <Route path="settings" element={<Settings />} />
           </Route>
         </Routes>

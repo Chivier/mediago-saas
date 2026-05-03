@@ -34,6 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from routers.health import router as health_router
+from routers.notes import router as notes_router
 from routers.subtitle import router as subtitle_router
 from routers.summarize import router as summarize_router
 from services.lmstudio_service import lmstudio_service
@@ -113,6 +114,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(subtitle_router)
     app.include_router(summarize_router)
+    app.include_router(notes_router)
 
     return app
 

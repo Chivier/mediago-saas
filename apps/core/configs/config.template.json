@@ -1,0 +1,137 @@
+{
+  "_doc": "Rendered to /app/configs/config.json by the core-config-init container, which substitutes ${BILI_COOKIE} from BILI_SESSDATA at startup. Field shape mirrors the Schema struct in apps/core/internal/core/schema/loader.go.",
+  "schemas": [
+    {
+      "type": "m3u8",
+      "args": {
+        "url": { "argsName": [] },
+        "localDir": { "argsName": ["--tmp-dir", "--save-dir"] },
+        "name": { "argsName": ["--save-name"] },
+        "headers": { "argsName": ["--header"] },
+        "deleteSegments": { "argsName": ["--del-after-done"] },
+        "proxy": { "argsName": ["--custom-proxy"] },
+        "__common__": {
+          "argsName": [
+            "--no-log",
+            "--auto-select",
+            "--ui-language",
+            "zh-CN",
+            "--live-real-time-merge",
+            "--check-segments-count",
+            "false"
+          ]
+        }
+      },
+      "consoleReg": {
+        "percent": "([\\d.]+)%",
+        "speed": "([\\d.]+[GMK]Bps)",
+        "error": "ERROR",
+        "start": "保存文件名:",
+        "isLive": "检测到直播流"
+      }
+    },
+    {
+      "type": "bilibili",
+      "args": {
+        "url": { "argsName": [] },
+        "localDir": { "argsName": ["--work-dir"] },
+        "name": { "argsName": ["--file-pattern"] },
+        "__common__": {
+          "argsName": [
+            "--use-app-api",
+            "--encoding-priority",
+            "avc,hevc,av1",
+            "-q",
+            "720P 高清, 480P 清晰, 360P 流畅",
+            "-c",
+            "${BILI_COOKIE}"
+          ]
+        }
+      },
+      "consoleReg": {
+        "percent": "([\\d.]+)%",
+        "speed": "([\\d.]+\\s[GMK]B/s)",
+        "error": "ERROR",
+        "start": "开始下载",
+        "isLive": "检测到直播流"
+      }
+    },
+    {
+      "type": "direct",
+      "args": {
+        "localDir": { "argsName": ["-d"] },
+        "name": { "argsName": ["-o"], "postfix": "@@AUTO@@" },
+        "url": { "argsName": [] },
+        "__common__": {
+          "argsName": [
+            "-x",
+            "16",
+            "-s",
+            "16",
+            "-k",
+            "1M",
+            "--console-log-level=notice",
+            "--summary-interval=1",
+            "--allow-overwrite=true",
+            "--auto-file-renaming=false"
+          ]
+        }
+      },
+      "consoleReg": {
+        "percent": "([\\d.]+)%",
+        "speed": "([\\d.]+\\s?[MKG]?i?B/s)",
+        "error": "errorCode|ERR",
+        "start": "Download",
+        "isLive": ""
+      }
+    },
+    {
+      "type": "youtube",
+      "args": {
+        "url": { "argsName": [] },
+        "localDir": { "argsName": ["-P"] },
+        "name": { "argsName": ["-o"] },
+        "headers": { "argsName": ["--add-header"] },
+        "proxy": { "argsName": ["--proxy"] },
+        "__common__": {
+          "argsName": [
+            "--no-mtime",
+            "--progress",
+            "--newline",
+            "--no-colors",
+            "-f",
+            "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best",
+            "--merge-output-format",
+            "mp4"
+          ]
+        }
+      },
+      "consoleReg": {
+        "percent": "([\\d.]+)%",
+        "speed": "([\\d.]+\\s?[MKG]?i?B/s)",
+        "error": "ERROR",
+        "start": "\\[download\\] Destination:",
+        "isLive": "\\[live\\]"
+      }
+    },
+    {
+      "type": "mediago",
+      "args": {
+        "url": { "argsName": [] },
+        "localDir": { "argsName": ["--save-dir", "--tmp-dir"] },
+        "name": { "argsName": ["--save-name"] },
+        "headers": { "argsName": ["--header"] },
+        "deleteSegments": { "argsName": ["--del-after-done"] },
+        "proxy": { "argsName": ["--proxy"] },
+        "__common__": { "argsName": ["--auto-select", "--thread-count", "8"] }
+      },
+      "consoleReg": {
+        "percent": "([\\d.]+)%",
+        "speed": "([\\d.]+\\s?[MKG]?B/s)",
+        "error": "Error:",
+        "start": "\\[download\\] \\d+ segments",
+        "isLive": "is_live:\\s*true|\\[live\\]"
+      }
+    }
+  ]
+}

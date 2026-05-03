@@ -42,14 +42,17 @@ function adapt(raw: RawFileEntry): FileEntry {
 }
 
 export async function listFiles(dirPath = ""): Promise<FilesListResponse> {
-  const { data } = await restfulClient.get<{
-    success: boolean;
-    data: RawFilesListResponse;
-  }>("/api/files", { params: { path: dirPath } });
+  // restfulClient's axios interceptor already unwraps the {success,data}
+  // envelope to the inner data, so the response is the raw payload
+  // ({cwd, parent, entries}). Earlier we accessed .data.data.cwd which
+  // double-unwraps and lands on undefined.
+  const { data } = await restfulClient.get<RawFilesListResponse>("/api/files", {
+    params: { path: dirPath },
+  });
   return {
-    cwd: data.data.cwd,
-    parent: data.data.parent,
-    entries: data.data.entries.map(adapt),
+    cwd: data.cwd,
+    parent: data.parent,
+    entries: data.entries.map(adapt),
   };
 }
 

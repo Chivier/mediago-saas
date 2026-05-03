@@ -186,7 +186,14 @@ class LMStudioService:
             await self._load_model()
 
     async def _load_model(self) -> None:
-        """Call LM Studio's load API and wait for the model to become available."""
+        """Call LM Studio's load API and wait for the model to become available.
+
+        When the upstream is Ollama instead of LM Studio (the SaaS deployment
+        default since v2), the ``/api/v0/models/load`` path returns 404 —
+        Ollama auto-loads on the first ``/v1/chat/completions`` request and
+        has no equivalent management endpoint. We treat 404 the same as 409
+        (already loaded) so inference can proceed.
+        """
         logger.info("Loading LM Studio model '%s'…", self._model)
         async with httpx.AsyncClient(timeout=300.0) as client:
             try:
@@ -198,10 +205,16 @@ class LMStudioService:
                 self._model_loaded = True
                 logger.info("LM Studio model '%s' loaded.", self._model)
             except httpx.HTTPStatusError as exc:
-                # 409 / similar can mean already loaded — treat as success
-                if exc.response.status_code in (409, 200):
+                # 200 / 404 / 409 all mean "no work to do":
+                #   200 — load succeeded
+                #   404 — backend doesn't expose a management API (Ollama)
+                #   409 — model already loaded
+                if exc.response.status_code in (200, 404, 409):
                     self._model_loaded = True
-                    logger.info("Model already loaded (HTTP %d).", exc.response.status_code)
+                    logger.info(
+                        "Model load skipped (HTTP %d — upstream auto-manages).",
+                        exc.response.status_code,
+                    )
                 else:
                     logger.error(
                         "Failed to load model '%s': HTTP %d — %s",
@@ -217,7 +230,13 @@ class LMStudioService:
                 self._model_loaded = True
 
     async def _unload_model(self) -> None:
-        """Ask LM Studio to unload the model and release GPU memory."""
+        """Ask LM Studio to unload the model and release GPU memory.
+
+        On Ollama there's no /api/v0/models/unload — we'd need to call
+        ``ollama stop <model>`` via a different route. For now we just
+        mark the local state as unloaded so the next load attempt re-runs;
+        the GPU semaphore is what actually gates concurrent usage anyway.
+        """
         logger.info(
             "Idle timeout reached — unloading LM Studio model '%s'.", self._model
         )
@@ -230,6 +249,14 @@ class LMStudioService:
                 resp.raise_for_status()
                 self._model_loaded = False
                 logger.info("LM Studio model '%s' unloaded successfully.", self._model)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404:
+                    # Ollama et al — no management endpoint, that's fine.
+                    self._model_loaded = False
+                    logger.info("Unload skipped (HTTP 404 — upstream auto-manages).")
+                else:
+                    logger.warning("Failed to unload (HTTP %d): %s", exc.response.status_code, exc)
+                    self._model_loaded = False
             except Exception as exc:
                 # Non-fatal: log and mark as unloaded so we attempt a reload next time
                 logger.warning(
