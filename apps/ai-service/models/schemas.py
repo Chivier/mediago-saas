@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +63,20 @@ class SubtitleJobResult(BaseModel):
 
     job_id: str
     status: JobStatus
+    file_path: str = ""
+    language: str = "auto"
     subtitles: list[SubtitleSegment] = Field(default_factory=list)
     srt_content: str = Field(default="")
     error: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SubtitleJobsListResponse(BaseModel):
+    """Paginated list of subtitle jobs."""
+
+    items: list[SubtitleJobResult] = Field(default_factory=list)
+    total: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -101,10 +117,22 @@ class SummarizeJobResult(BaseModel):
 
     job_id: str
     status: JobStatus
+    file_path: str = ""
+    title: str | None = None
+    language: str = "zh"
     summary: str = Field(default="")
     key_points: list[str] = Field(default_factory=list)
     topic: str = Field(default="")
     error: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SummarizeJobsListResponse(BaseModel):
+    """Paginated list of summarize jobs."""
+
+    items: list[SummarizeJobResult] = Field(default_factory=list)
+    total: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -135,6 +163,8 @@ class SubtitleJob(BaseModel):
     subtitles: list[SubtitleSegment] = Field(default_factory=list)
     srt_content: str = ""
     error: str | None = None
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -142,9 +172,13 @@ class SubtitleJob(BaseModel):
         return SubtitleJobResult(
             job_id=self.job_id,
             status=self.status,
+            file_path=self.file_path,
+            language=self.language,
             subtitles=self.subtitles,
             srt_content=self.srt_content,
             error=self.error,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
         )
 
 
@@ -161,6 +195,8 @@ class SummarizeJob(BaseModel):
     key_points: list[str] = Field(default_factory=list)
     topic: str = ""
     error: str | None = None
+    created_at: datetime = Field(default_factory=_utc_now)
+    updated_at: datetime = Field(default_factory=_utc_now)
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -168,8 +204,13 @@ class SummarizeJob(BaseModel):
         return SummarizeJobResult(
             job_id=self.job_id,
             status=self.status,
+            file_path=self.file_path,
+            title=self.title,
+            language=self.language,
             summary=self.summary,
             key_points=self.key_points,
             topic=self.topic,
             error=self.error,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
         )

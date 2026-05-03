@@ -6,6 +6,7 @@ import DownloadController from "../controller/download.controller";
 import TaskController from "../controller/task.controller";
 import StorageController from "../controller/storage.controller";
 import YuqingController from "../controller/yuqing.controller";
+import FilesController from "../controller/files.controller";
 import { API_PREFIX } from "../constants";
 import Logger from "../services/logger.service";
 
@@ -23,6 +24,8 @@ export default class RouterService extends Router {
     private readonly storageController: StorageController,
     @inject(YuqingController)
     private readonly yuqingController: YuqingController,
+    @inject(FilesController)
+    private readonly filesController: FilesController,
     @inject(Logger)
     private readonly logger: Logger,
   ) {
@@ -38,6 +41,7 @@ export default class RouterService extends Router {
     this.taskController.register(this);
     this.storageController.register(this);
     this.yuqingController.register(this);
+    this.filesController.register(this);
 
     // Also register bilibili route without API prefix
     const bilibiliRouter = new Router();

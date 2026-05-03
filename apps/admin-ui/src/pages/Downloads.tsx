@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertCircle,
+  Plus,
+  Loader2,
 } from "lucide-react";
 import {
   Card,
@@ -16,6 +18,17 @@ import {
 } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "../components/ui/dialog";
+import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import {
   Table,
   TableBody,
@@ -37,9 +50,138 @@ import {
   startDownload,
   stopDownload,
   deleteDownload,
+  createDownload,
   type DownloadStatus,
+  type CoreDownloadType,
 } from "../api/downloads";
 import { Progress } from "../components/ui/progress";
+
+function CreateDownloadDialog({ onCreated }: { onCreated: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [url, setUrl] = useState("");
+  const [title, setTitle] = useState("");
+  const [type, setType] = useState<CoreDownloadType>("auto");
+
+  const mutation = useMutation({
+    mutationFn: createDownload,
+    onSuccess: () => {
+      setOpen(false);
+      setUrl("");
+      setTitle("");
+      setType("auto");
+      onCreated();
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) return;
+    mutation.mutate({
+      url: trimmedUrl,
+      title: title.trim() || undefined,
+      type,
+    });
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) mutation.reset();
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button size="sm">
+          <Plus size={14} />
+          New Download
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Create Download</DialogTitle>
+          <DialogDescription>
+            Submit a video URL (m3u8, MP4, Bilibili, YouTube, …). The Go backend
+            will detect the type and queue it.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="dl-url">URL</Label>
+            <Input
+              id="dl-url"
+              placeholder="https://example.com/video.m3u8"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2">
+              <Label htmlFor="dl-title">
+                Title{" "}
+                <span className="text-muted-foreground font-normal">
+                  (optional)
+                </span>
+              </Label>
+              <Input
+                id="dl-title"
+                placeholder="My recording"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="dl-type">Type</Label>
+              <Select
+                value={type}
+                onValueChange={(v) => setType(v as CoreDownloadType)}
+              >
+                <SelectTrigger id="dl-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">Auto detect</SelectItem>
+                  <SelectItem value="m3u8">m3u8 (HLS)</SelectItem>
+                  <SelectItem value="direct">Direct (mp4 / file)</SelectItem>
+                  <SelectItem value="bilibili">Bilibili</SelectItem>
+                  <SelectItem value="youtube">YouTube</SelectItem>
+                  <SelectItem value="mediago">Mediago</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {mutation.isError && (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle size={14} />
+              {(mutation.error as Error).message}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={mutation.isPending || !url.trim()}>
+              {mutation.isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Plus size={14} />
+              )}
+              Submit
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 const STATUS_FILTERS = [
   { value: "all", label: "All" },
@@ -119,6 +261,8 @@ export function Downloads() {
             {data.total} total
           </span>
         )}
+
+        <CreateDownloadDialog onCreated={invalidate} />
       </div>
 
       {/* Table */}

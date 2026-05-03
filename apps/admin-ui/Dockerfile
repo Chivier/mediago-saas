@@ -1,13 +1,14 @@
-FROM node:22-slim AS builder
-WORKDIR /app
-RUN npm install -g pnpm
-COPY package.json pnpm-lock.yaml* ./
-RUN pnpm install --frozen-lockfile 2>/dev/null || pnpm install
-COPY . .
-RUN pnpm build
-
 FROM nginx:alpine
-COPY --from=builder /app/dist /usr/share/nginx/html
+
+# apache2-utils provides htpasswd, used by the entrypoint to materialize
+# /etc/nginx/.htpasswd from ADMIN_USER/ADMIN_PASSWORD at container start.
+RUN apk add --no-cache apache2-utils
+
+COPY dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.sh /usr/local/bin/admin-entrypoint.sh
+RUN chmod +x /usr/local/bin/admin-entrypoint.sh
+
 EXPOSE 80
+ENTRYPOINT ["/usr/local/bin/admin-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]

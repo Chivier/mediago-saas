@@ -1,17 +1,45 @@
 services:
+  # ── Ollama LLM backend (OpenAI-compatible API, replaces LM Studio) ───────
+  ollama:
+    image: ollama/ollama:latest
+    expose:
+      - "11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0:11434"
+      OLLAMA_KEEP_ALIVE: "24h"
+    volumes:
+      - /chivier-disk/mediago-saas/ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
   # ── Go download backend (apps/core) ──────────────────────────────────────
   mediago-core:
     build:
-      context: apps/core
-      dockerfile: ../../Dockerfile # upstream multi-stage Go build
+      context: .
+      dockerfile: Dockerfile # upstream multi-stage Go build (root context)
+    # Append flags after the entrypoint's defaults; Go's flag package
+    # accepts later occurrences and overrides earlier ones, so this
+    # bends the all-in-one image to our SaaS layout (port 8080, no auth,
+    # data/log/download paths matching the bind mounts below).
+    command:
+      - --port=8080
+      - --log-dir=/logs
+      - --local-dir=/downloads
+      - --db-path=/data/mediago.db
+      - --config-dir=/data
+      - --enable-auth=false
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       PORT: "8080"
       GIN_MODE: release
       DB_PATH: /data/mediago.db
-      LOG_DIR: /logs
-      LOCAL_DIR: /downloads
       MAX_RUNNER: "4"
       DELETE_SEGMENTS: "true"
     volumes:
@@ -25,7 +53,7 @@ services:
     build:
       context: apps/restful
     ports:
-      - "8898:8898"
+      - "127.0.0.1:8898:8898"
     environment:
       PORT: "8898"
       MEDIAGO_BASE_URL: "http://mediago-core:8080"
@@ -45,13 +73,13 @@ services:
     build:
       context: apps/ai-service
     ports:
-      - "8899:8899"
+      - "127.0.0.1:8899:8899"
     environment:
       PORT: "8899"
       STORAGE_PATH: /downloads
-      # LM Studio must run on the host; use host.docker.internal or set explicit IP
-      LMSTUDIO_BASE_URL: "http://host.docker.internal:1234/v1"
-      LM_MODEL: "Qwen3.6-35B-A3B"
+      # Points to the in-cluster Ollama service (OpenAI-compatible)
+      LMSTUDIO_BASE_URL: "http://ollama:11434/v1"
+      LM_MODEL: "qwen3:30b-a3b"
       LM_IDLE_TIMEOUT: "3600" # unload after 1h idle; set 0 to disable
       GPU_SLOTS: "2"
       FUNASR_DEVICE: "cuda"
@@ -64,10 +92,10 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 2
+              count: all
               capabilities: [gpu]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      - ollama
     restart: unless-stopped
 
   # ── Admin WebUI (apps/admin-ui, production static build) ─────────────────
@@ -78,9 +106,12 @@ services:
     ports:
       - "5174:80"
     environment:
-      VITE_GO_API_URL: "http://localhost:8080"
-      VITE_RESTFUL_API_URL: "http://localhost:8898"
-      VITE_AI_API_URL: "http://localhost:8899"
+      # HTTP Basic auth credentials — provided by .env (ADMIN_USER + ADMIN_PASSWORD).
+      # The container generates /etc/nginx/.htpasswd on startup; nginx then gates
+      # every location, including the /go-api /restful-api /ai-api proxy paths
+      # the admin-ui's axios clients hit by default.
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
     depends_on:
       - mediago-core
       - mediago-restful

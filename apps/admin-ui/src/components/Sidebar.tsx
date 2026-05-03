@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom";
 import {
   LayoutDashboard,
   Download,
+  FolderOpen,
   ListTodo,
   BrainCircuit,
   Settings,
@@ -22,6 +23,7 @@ interface SidebarProps {
 const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/downloads", label: "Downloads", icon: Download },
+  { to: "/files", label: "Files", icon: FolderOpen },
   { to: "/batch", label: "Batch Tasks", icon: ListTodo },
   { to: "/ai-jobs", label: "AI Processing", icon: BrainCircuit },
   { to: "/settings", label: "Settings", icon: Settings },

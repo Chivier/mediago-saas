@@ -22,10 +22,13 @@ from typing import Annotated
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path
 from fastapi.responses import PlainTextResponse
 
+from datetime import datetime, timezone
+
 from models.schemas import (
     JobStatus,
     SubtitleJob,
     SubtitleJobResult,
+    SubtitleJobsListResponse,
     TranscribeJobQueued,
     TranscribeRequest,
 )
@@ -52,6 +55,7 @@ async def _run_transcription(job_id: str) -> None:
         return
 
     job.status = JobStatus.processing
+    job.updated_at = datetime.now(timezone.utc)
     logger.info("Transcription job %s started for: %s", job_id, job.file_path)
 
     try:
@@ -73,6 +77,8 @@ async def _run_transcription(job_id: str) -> None:
         job.status = JobStatus.failed
         job.error = f"Transcription error: {exc}"
         logger.exception("Transcription job %s failed: %s", job_id, exc)
+    finally:
+        job.updated_at = datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +114,17 @@ async def transcribe(
         request.language,
     )
     return TranscribeJobQueued(job_id=job_id, status=JobStatus.queued)
+
+
+@router.get("/jobs", response_model=SubtitleJobsListResponse)
+async def list_jobs() -> SubtitleJobsListResponse:
+    """Return every subtitle job, newest first."""
+    items = sorted(
+        (job.to_result() for job in _jobs.values()),
+        key=lambda j: j.created_at or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return SubtitleJobsListResponse(items=items, total=len(items))
 
 
 @router.get("/jobs/{job_id}", response_model=SubtitleJobResult)

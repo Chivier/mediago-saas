@@ -1,10 +1,11 @@
 FROM node:22-slim
 
-# Install necessary dependencies for native modules
+# Install necessary dependencies for native modules + curl for healthcheck
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

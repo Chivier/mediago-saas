@@ -8,6 +8,7 @@ import { cn } from "./ui/utils";
 const PAGE_TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/downloads": "Downloads Manager",
+  "/files": "Files",
   "/batch": "Batch Tasks",
   "/ai-jobs": "AI Processing",
   "/settings": "Settings",

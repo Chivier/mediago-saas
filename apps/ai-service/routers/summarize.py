@@ -28,12 +28,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Path
 
+from datetime import datetime, timezone
+
 from models.schemas import (
     JobStatus,
     SubtitleSegment,
     SummarizeJob,
     SummarizeJobQueued,
     SummarizeJobResult,
+    SummarizeJobsListResponse,
     SummarizeRequest,
 )
 from services.funasr_service import funasr_service
@@ -65,6 +68,7 @@ async def _run_summarize(job_id: str) -> None:
         return
 
     job.status = JobStatus.processing
+    job.updated_at = datetime.now(timezone.utc)
     logger.info("Summarize job %s started for: %s", job_id, job.file_path)
 
     # ------------------------------------------------------------------
@@ -111,6 +115,7 @@ async def _run_summarize(job_id: str) -> None:
     if not segments:
         job.status = JobStatus.failed
         job.error = "No subtitles could be extracted from the file."
+        job.updated_at = datetime.now(timezone.utc)
         logger.warning("Summarize job %s: no segments after transcription", job_id)
         return
 
@@ -133,6 +138,8 @@ async def _run_summarize(job_id: str) -> None:
         job.status = JobStatus.failed
         job.error = f"LLM summarization error: {exc}"
         logger.exception("Summarize job %s failed at LLM step: %s", job_id, exc)
+    finally:
+        job.updated_at = datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -171,6 +178,17 @@ async def summarize_video(
         request.language,
     )
     return SummarizeJobQueued(job_id=job_id, status=JobStatus.queued)
+
+
+@router.get("/jobs", response_model=SummarizeJobsListResponse)
+async def list_jobs() -> SummarizeJobsListResponse:
+    """Return every summarize job, newest first."""
+    items = sorted(
+        (job.to_result() for job in _jobs.values()),
+        key=lambda j: j.created_at or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return SummarizeJobsListResponse(items=items, total=len(items))
 
 
 @router.get("/jobs/{job_id}", response_model=SummarizeJobResult)
