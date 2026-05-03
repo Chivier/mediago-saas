@@ -5,6 +5,7 @@ import RestfulApp from "./app";
 
 // Import all providers to register them
 import "./services/logger.service";
+import "./services/mediago-client.service";
 import "./services/batch-task.service";
 import "./services/storage.service";
 import "./services/download-processor.service";

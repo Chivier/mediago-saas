@@ -36,6 +36,10 @@ export const MAX_CONCURRENT_TASKS = parseInt(
   10,
 );
 
+// Go backend (apps/core) base URL
+export const MEDIAGO_BASE_URL =
+  process.env.MEDIAGO_BASE_URL || "http://localhost:8080";
+
 export enum Platform {
   Windows = "win32",
   MacOS = "darwin",

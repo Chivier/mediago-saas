@@ -2,21 +2,17 @@ import http from "node:http";
 import { provide } from "@inversifyjs/binding-decorators";
 import cors from "@koa/cors";
 import Router from "@koa/router";
-import {
-  DownloaderServer,
-  DownloadTaskService,
-  TypeORM,
-} from "@mediago/shared-node";
 import { inject, injectable } from "inversify";
 import Koa from "koa";
 import bodyParser from "koa-bodyparser";
 import RouterService from "./core/router";
 import Database from "./core/database";
-import { PORT, LOG_DIR, DOWNLOAD_DIR, DB_PATH, TEMP_DIR } from "./constants";
+import { PORT, LOG_DIR, DOWNLOAD_DIR, TEMP_DIR } from "./constants";
 import Logger from "./services/logger.service";
 import { BatchTaskService } from "./services/batch-task.service";
 import { StorageService } from "./services/storage.service";
 import { DownloadProcessorService } from "./services/download-processor.service";
+import { MediaGoClient } from "./services/mediago-client.service";
 import AuthMiddleware from "./middleware/auth";
 import ErrorHandlerMiddleware from "./middleware/error-handler";
 import fs from "node:fs";
@@ -29,8 +25,6 @@ export default class RestfulApp extends Koa {
     private readonly router: RouterService,
     @inject(Database)
     private readonly database: Database,
-    @inject(TypeORM)
-    private readonly sharedDb: TypeORM,
     @inject(Logger)
     private readonly logger: Logger,
     @inject(BatchTaskService)
@@ -39,6 +33,8 @@ export default class RestfulApp extends Koa {
     private readonly storageService: StorageService,
     @inject(DownloadProcessorService)
     private readonly downloadProcessor: DownloadProcessorService,
+    @inject(MediaGoClient)
+    private readonly mediaGoClient: MediaGoClient,
     @inject(AuthMiddleware)
     private readonly authMiddleware: AuthMiddleware,
     @inject(ErrorHandlerMiddleware)
@@ -53,14 +49,16 @@ export default class RestfulApp extends Koa {
     fs.mkdirSync(LOG_DIR, { recursive: true });
     fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-    // Initialize databases
+    // Initialize local SQLite (batch tasks + storage config)
     const dataSource = await this.database.init();
-    await this.sharedDb.init({ dbPath: DB_PATH });
 
     // Initialize services with database
     this.batchTaskService.init(dataSource);
     await this.storageService.init(dataSource);
     this.downloadProcessor.init();
+
+    // Subscribe to Go backend SSE events
+    this.mediaGoClient.startEventStream();
 
     // Initialize router
     this.router.init();
@@ -73,7 +71,7 @@ export default class RestfulApp extends Koa {
     this.use(this.router.routes());
     this.use(this.router.allowedMethods());
 
-    // Also add bilibili shortcut route
+    // Bilibili shortcut convenience route
     const bilibiliRouter = new Router();
     bilibiliRouter.get("/bilibili/:bvid", async (ctx) => {
       ctx.redirect(`/api/bilibili/${ctx.params.bvid}${ctx.search}`);
@@ -85,7 +83,6 @@ export default class RestfulApp extends Koa {
 
     server.listen(PORT, () => {
       this.logger.info(`RESTful API server running on port ${PORT}`);
-      this.logger.info(`API documentation available at http://localhost:${PORT}/api/health`);
     });
   }
 }

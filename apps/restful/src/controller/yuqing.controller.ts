@@ -20,13 +20,9 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { inject, injectable } from "inversify";
 import type Router from "@koa/router";
-import {
-  DownloaderServer,
-  DownloadTaskService,
-  getPageTitle,
-} from "@mediago/shared-node";
-import { DownloadStatus, DownloadType } from "@mediago/shared-common";
+import { DownloadType } from "@mediago/shared-common";
 import Logger from "../services/logger.service";
+import { MediaGoClient } from "../services/mediago-client.service";
 import { ApiError } from "../types";
 import { success, isValidUrl } from "../utils";
 import { DOWNLOAD_DIR } from "../constants";
@@ -56,27 +52,25 @@ interface YuqingJob {
 @provide()
 export default class YuqingController {
   private jobs = new Map<string, YuqingJob>();
-  // download_task_id (mediago 内部 ID) → yuqing task_id 反查
+  // Go download ID → yuqing task_id reverse lookup
   private dlTaskToJob = new Map<number, string>();
 
   constructor(
     @inject(Logger)
     private readonly logger: Logger,
-    @inject(DownloaderServer)
-    private readonly downloaderServer: DownloaderServer,
-    @inject(DownloadTaskService)
-    private readonly downloadTaskService: DownloadTaskService,
+    @inject(MediaGoClient)
+    private readonly client: MediaGoClient,
   ) {
     this.subscribeEvents();
   }
 
   private subscribeEvents(): void {
-    this.downloaderServer.on("download-success", async (downloadTaskId: number) => {
+    this.client.on("download-success", async (downloadTaskId: number | string) => {
       const yuqingTaskId = this.dlTaskToJob.get(Number(downloadTaskId));
-      if (!yuqingTaskId) return; // 不是 yuqing 触发的下载, 让 DownloadProcessorService 处理
+      if (!yuqingTaskId) return;
       await this.onDownloadComplete(yuqingTaskId, true);
     });
-    this.downloaderServer.on("download-failed", async (downloadTaskId: number) => {
+    this.client.on("download-failed", async (downloadTaskId: number | string) => {
       const yuqingTaskId = this.dlTaskToJob.get(Number(downloadTaskId));
       if (!yuqingTaskId) return;
       await this.onDownloadComplete(yuqingTaskId, false);
@@ -156,7 +150,7 @@ export default class YuqingController {
 
     let title: string;
     try {
-      title = hintTitle || (await getPageTitle(job.url));
+      title = hintTitle || (await this.client.getPageTitle(job.url)) || `yuqing_${job.task_id.slice(0, 8)}`;
     } catch {
       title = `yuqing_${job.task_id.slice(0, 8)}`;
     }
@@ -165,24 +159,17 @@ export default class YuqingController {
       ? DownloadType.bilibili
       : DownloadType.m3u8;
 
-    const dt = await this.downloadTaskService.addDownloadTask({
+    const goTask = await this.client.createDownload({
       name: title,
       url: job.url,
       type: downloadType,
       folder: "_yuqing",
-      headers: "",
-      status: DownloadStatus.Watting,
-      isLive: false,
-      createdDate: new Date(),
-      duration: null,
+      startDownload: true,
     });
 
-    job.download_task_id = dt.id;
-    this.dlTaskToJob.set(dt.id, job.task_id);
-
-    const taskDir = path.join(DOWNLOAD_DIR, "_yuqing");
-    this.logger.info(`[yuqing] job ${job.task_id} → mediago task ${dt.id} (${title})`);
-    await this.downloadTaskService.startDownload(dt.id, taskDir, true);
+    job.download_task_id = goTask.id;
+    this.dlTaskToJob.set(goTask.id, job.task_id);
+    this.logger.info(`[yuqing] job ${job.task_id} → Go task ${goTask.id} (${title})`);
   }
 
   private async onDownloadComplete(yuqingTaskId: string, success: boolean): Promise<void> {
@@ -197,7 +184,7 @@ export default class YuqingController {
 
     // 找文件 (mediago 把文件放在 DOWNLOAD_DIR/_yuqing/<name>.mp4)
     try {
-      const dt = await this.downloadTaskService.findById(job.download_task_id!);
+      const dt = await this.client.getDownload(job.download_task_id!);
       if (!dt) {
         this.markFailed(yuqingTaskId, "download task disappeared");
         return;
