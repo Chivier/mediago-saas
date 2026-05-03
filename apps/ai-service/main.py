@@ -36,6 +36,7 @@ load_dotenv()
 from routers.health import router as health_router
 from routers.subtitle import router as subtitle_router
 from routers.summarize import router as summarize_router
+from services.lmstudio_service import lmstudio_service
 
 # ---------------------------------------------------------------------------
 # Logging configuration
@@ -68,13 +69,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         os.getenv("PORT", "8899"),
     )
     logger.info(
-        "GPU slots: %s | FUNASR model: %s | LM Studio: %s | LM model: %s",
+        "GPU slots: %s | FUNASR model: %s | LM Studio: %s | LM model: %s | idle timeout: %ss",
         os.getenv("GPU_SLOTS", "2"),
         os.getenv("FUNASR_MODEL", "paraformer-zh"),
         os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"),
         os.getenv("LM_MODEL", "Qwen3.6-35B-A3B"),
+        os.getenv("LM_IDLE_TIMEOUT", "3600"),
     )
+    lmstudio_service.start_idle_watcher()
     yield
+    lmstudio_service.stop_idle_watcher()
     logger.info("MediaGo AI Service shutting down.")
 
 

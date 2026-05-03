@@ -15,9 +15,9 @@ services:
       MAX_RUNNER: "4"
       DELETE_SEGMENTS: "true"
     volumes:
-      - downloads:/downloads
-      - core-data:/data
-      - core-logs:/logs
+      - /chivier-disk/mediago-saas/downloads:/downloads
+      - /chivier-disk/mediago-saas/core-data:/data
+      - /chivier-disk/mediago-saas/core-logs:/logs
     restart: unless-stopped
 
   # ── TypeScript Koa REST API (apps/restful) ────────────────────────────────
@@ -35,7 +35,7 @@ services:
       # Set PRIVATE_KEY to protect the API
       # PRIVATE_KEY: "change-me"
     volumes:
-      - downloads:/downloads
+      - /chivier-disk/mediago-saas/downloads:/downloads
     depends_on:
       - mediago-core
     restart: unless-stopped
@@ -52,12 +52,13 @@ services:
       # LM Studio must run on the host; use host.docker.internal or set explicit IP
       LMSTUDIO_BASE_URL: "http://host.docker.internal:1234/v1"
       LM_MODEL: "Qwen3.6-35B-A3B"
+      LM_IDLE_TIMEOUT: "3600" # unload after 1h idle; set 0 to disable
       GPU_SLOTS: "2"
       FUNASR_DEVICE: "cuda"
       FUNASR_MODEL: "paraformer-zh"
     volumes:
-      - downloads:/downloads
-      - ai-models:/root/.cache # HuggingFace / ModelScope model cache
+      - /chivier-disk/mediago-saas/downloads:/downloads
+      - /chivier-disk/mediago-saas/ai-models:/root/.cache # HuggingFace / ModelScope model cache
     deploy:
       resources:
         reservations:
@@ -85,9 +86,3 @@ services:
       - mediago-restful
       - mediago-ai
     restart: unless-stopped
-
-volumes:
-  downloads:
-  core-data:
-  core-logs:
-  ai-models:
