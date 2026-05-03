@@ -41,12 +41,57 @@ def poll_once() -> dict:
     ai = AIClient()
     try:
         _poll_downloads(mediago, ai, summary)
+        _catch_up_missing_ai(ai, summary)
         _poll_ai_jobs(ai, summary)
     finally:
         mediago.close()
         ai.close()
 
     return summary
+
+
+def _catch_up_missing_ai(ai: AIClient, summary: dict) -> None:
+    """Backfill AI submissions for videos that finished downloading but
+    never made it into the AI pipeline.
+
+    Two ways a video lands here:
+
+    * The download finished BEFORE the AI service was healthy, so the
+      submission attempt blew up and we recorded ``ai_status=failed``;
+      an operator later cleared it back to NULL.
+    * AUTO_AI_PROCESSING was off when the download completed and is on now.
+    """
+    if not AUTO_AI_PROCESSING:
+        return
+
+    with session_scope() as s:
+        rows = list(
+            s.scalars(
+                select(Video)
+                .where(Video.status == "succeeded")
+                .where(Video.file_path.is_not(None))
+                .where(Video.ai_status.is_(None))
+                .limit(20)  # cap per-tick so a big backlog drips out instead of stampeding
+            )
+        )
+
+    for row in rows:
+        try:
+            job_id = ai.submit_notes(file_path=row.file_path, title=row.title)
+        except AIClientError as exc:
+            logger.warning("catch-up: ai submit failed for video %s: %s", row.id, exc)
+            with session_scope() as s:
+                v = s.get(Video, row.id)
+                if v is not None:
+                    v.ai_status = "failed"
+                    v.updated_at = dt.datetime.now(dt.timezone.utc)
+            continue
+        with session_scope() as s:
+            v = s.get(Video, row.id)
+            if v is not None:
+                v.ai_status = "pending"
+                v.ai_job_id = job_id
+        summary["ai_submitted"] += 1
 
 
 def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None:
