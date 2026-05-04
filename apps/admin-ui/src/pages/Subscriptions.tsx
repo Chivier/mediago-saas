@@ -698,12 +698,18 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
       </p>
     );
   }
+  const hasEntities =
+    !!notes.entities &&
+    Object.values(notes.entities).some(
+      (arr) => Array.isArray(arr) && arr.length > 0,
+    );
   return (
     <Tabs defaultValue="summary" className="w-full">
       <TabsList>
         <TabsTrigger value="summary">Summary</TabsTrigger>
         <TabsTrigger value="sections">Sections</TabsTrigger>
         <TabsTrigger value="mindmap">Mindmap</TabsTrigger>
+        {hasEntities && <TabsTrigger value="entities">Entities</TabsTrigger>}
         <TabsTrigger value="transcript">Transcript</TabsTrigger>
       </TabsList>
 
@@ -769,6 +775,53 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
       <TabsContent value="mindmap" className="pt-2">
         <Mindmap source={notes.mindmap || ""} />
       </TabsContent>
+
+      {hasEntities && (
+        <TabsContent value="entities" className="space-y-3 pt-2">
+          {(
+            [
+              ["people", "人物"],
+              ["works", "作品"],
+              ["terms", "术语"],
+              ["places", "地点"],
+              ["events", "事件"],
+            ] as const
+          ).map(([key, label]) => {
+            const items = (notes.entities ?? {})[key] ?? [];
+            if (!items.length) return null;
+            return (
+              <div key={key}>
+                <h5 className="text-xs font-semibold uppercase text-muted-foreground mb-1">
+                  {label}
+                </h5>
+                <ul className="space-y-1">
+                  {items.map((e, i) => (
+                    <li key={i} className="text-sm">
+                      <span className="font-medium">{e.name}</span>
+                      {e.note ? (
+                        <span className="text-muted-foreground">
+                          {" "}
+                          — {e.note}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+          {notes.polish_notes && (
+            <div className="border-t pt-3 mt-3">
+              <h5 className="text-xs font-semibold uppercase text-muted-foreground mb-1">
+                Polish notes
+              </h5>
+              <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                {notes.polish_notes}
+              </p>
+            </div>
+          )}
+        </TabsContent>
+      )}
 
       <TabsContent value="transcript" className="pt-2">
         {notes.transcript ? (
@@ -845,6 +898,28 @@ function VideoRow({
               {video.status}
             </Badge>
             {aiBadge}
+            {video.isPaidPreview && (
+              <Badge
+                variant="destructive"
+                className="text-[10px] uppercase w-fit"
+                title={
+                  video.actualDurationSeconds
+                    ? `Only got ${Math.round(video.actualDurationSeconds / 60)}min of an expected ${video.duration} clip`
+                    : "Paid / member-only — preview clip only"
+                }
+              >
+                Paid preview
+              </Badge>
+            )}
+            {video.notes?.polished && (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase w-fit"
+                title="Final notes were validated by GPT-5.4"
+              >
+                ✦ polished
+              </Badge>
+            )}
           </div>
         </TableCell>
         <TableCell className="text-right">
@@ -954,6 +1029,98 @@ function CreatorVideosPanel({ creator }: { creator: Creator }) {
   );
 }
 
+// Inline tag editor: pencil button → dialog with comma-separated input.
+// Comma-separated keeps the implementation tiny without sacrificing the
+// per-tag mental model — paste in "电影解说, 哲学, 财经" and you get
+// three chips back.
+function TagsEditor({
+  creator,
+  onSaved,
+}: {
+  creator: Creator;
+  onSaved: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState((creator.tags ?? []).join(", "));
+
+  const mutation = useMutation({
+    mutationFn: (tags: string[]) => patchCreator(creator.id, { tags }),
+    onSuccess: () => {
+      setOpen(false);
+      onSaved();
+    },
+  });
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const tags = text
+      .split(/[,，]/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+    mutation.mutate(tags);
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (v) setText((creator.tags ?? []).join(", "));
+        else mutation.reset();
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Edit tags"
+          title="Edit tags"
+        >
+          <Pencil size={14} />
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Tags for {creator.name}</DialogTitle>
+          <DialogDescription>
+            用逗号分隔多个标签，例如 <code>电影解说, 财经, 哲学</code>。
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <Input
+            autoFocus
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="电影解说, 哲学, ..."
+          />
+          {mutation.isError && (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle size={14} />
+              {(mutation.error as Error).message}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={mutation.isPending}>
+              {mutation.isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : null}
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function CreatorRow({
   creator,
   expanded,
@@ -995,6 +1162,19 @@ function CreatorRow({
             <p className="text-xs text-muted-foreground font-mono">
               {creator.platform} · {creator.externalId}
             </p>
+            {creator.tags?.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {creator.tags.map((t) => (
+                  <Badge
+                    key={t}
+                    variant="secondary"
+                    className="text-[10px] py-0"
+                  >
+                    {t}
+                  </Badge>
+                ))}
+              </div>
+            )}
             {creator.lastError && (
               <p
                 className="text-xs text-destructive mt-0.5"
@@ -1031,6 +1211,7 @@ function CreatorRow({
             {/* Per-creator cookie editor removed — the platform-level
                 login card at the top of the Subscriptions page covers
                 every creator. */}
+            <TagsEditor creator={creator} onSaved={onChange} />
             <Button
               variant="ghost"
               size="icon"

@@ -116,6 +116,13 @@ services:
       GPU_SLOTS: "2"
       FUNASR_DEVICE: "cuda"
       FUNASR_MODEL: "paraformer-zh"
+      # Final-pass polish via an OpenAI-compatible GPT-5.4 endpoint —
+      # fixes FUNASR transcription typos, punctuation, and validates
+      # named entities (people / works / terms). Disabled if blank.
+      POLISH_API_KEY: ${POLISH_API_KEY:-}
+      POLISH_BASE_URL: ${POLISH_BASE_URL:-https://claude.chivier.site}
+      POLISH_MODEL: ${POLISH_MODEL:-gpt-5.4}
+      POLISH_REASONING_EFFORT: ${POLISH_REASONING_EFFORT:-low}
     volumes:
       - /chivier-disk/mediago-saas/downloads:/downloads
       - /chivier-disk/mediago-saas/ai-models:/root/.cache # HuggingFace / ModelScope model cache
@@ -156,6 +163,12 @@ services:
       # it the refresh path will mostly fail with `code=-352 风控校验失败`.
       # Get the value from DevTools → Application → Cookies → SESSDATA.
       BILI_SESSDATA: ${BILI_SESSDATA:-}
+      # Same polish env as ai-service — used by scripts/repolish.py to
+      # backfill polishing on already-generated notes.
+      POLISH_API_KEY: ${POLISH_API_KEY:-}
+      POLISH_BASE_URL: ${POLISH_BASE_URL:-https://claude.chivier.site}
+      POLISH_MODEL: ${POLISH_MODEL:-gpt-5.4}
+      POLISH_REASONING_EFFORT: ${POLISH_REASONING_EFFORT:-low}
     volumes:
       - /chivier-disk/mediago-saas/downloads:/downloads
       - /chivier-disk/mediago-saas/follow-data:/data

@@ -19,6 +19,7 @@ class CreatorIn(BaseModel):
     name: Optional[str] = None
     auto_download: bool = Field(default=True, alias="autoDownload")
     cookies: Optional[str] = None
+    tags: Optional[list[str]] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -28,6 +29,9 @@ class CreatorPatch(BaseModel):
     auto_download: Optional[bool] = Field(default=None, alias="autoDownload")
     # ``""`` clears stored cookies; ``None`` leaves them alone.
     cookies: Optional[str] = None
+    # Replaces the tag set entirely. ``[]`` clears all tags; ``None``
+    # leaves them alone.
+    tags: Optional[list[str]] = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -42,6 +46,7 @@ class CreatorOut(BaseModel):
     # UI can show a "cookies configured" indicator without exposing
     # SESSDATA on every creators-list refresh.
     has_cookies: bool = Field(default=False, serialization_alias="hasCookies")
+    tags: list[str] = Field(default_factory=list)
     last_checked_at: Optional[dt.datetime] = Field(default=None, serialization_alias="lastCheckedAt")
     last_error: Optional[str] = Field(default=None, serialization_alias="lastError")
     created_at: dt.datetime = Field(serialization_alias="createdAt")
@@ -65,6 +70,10 @@ class VideoOut(BaseModel):
     ai_status: Optional[str] = Field(default=None, serialization_alias="aiStatus")
     ai_job_id: Optional[str] = Field(default=None, serialization_alias="aiJobId")
     notes: Optional[dict[str, Any]] = None
+    is_paid_preview: bool = Field(default=False, serialization_alias="isPaidPreview")
+    actual_duration_seconds: Optional[int] = Field(
+        default=None, serialization_alias="actualDurationSeconds"
+    )
     discovered_at: dt.datetime = Field(serialization_alias="discoveredAt")
     updated_at: dt.datetime = Field(serialization_alias="updatedAt")
 

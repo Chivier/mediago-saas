@@ -43,6 +43,8 @@ export interface Creator {
   // configured — so the UI can show a "cookies set" indicator without
   // leaking SESSDATA into the React Query cache.
   hasCookies: boolean;
+  // Free-form labels used to group creators in the Subscriptions list.
+  tags: string[];
   lastCheckedAt: string | null;
   lastError: string | null;
   createdAt: string;
@@ -70,12 +72,23 @@ export interface NotesSection {
   details?: string;
 }
 
+export interface NotesEntities {
+  people?: { name: string; note?: string }[];
+  works?: { name: string; note?: string }[];
+  terms?: { name: string; note?: string }[];
+  places?: { name: string; note?: string }[];
+  events?: { name: string; note?: string }[];
+}
+
 export interface VideoNotes {
   transcript?: string;
   summary?: string;
   key_topics?: string[];
   sections?: NotesSection[];
   mindmap?: string;
+  entities?: NotesEntities;
+  polished?: boolean;
+  polish_notes?: string;
 }
 
 export interface FollowVideo {
@@ -93,6 +106,10 @@ export interface FollowVideo {
   aiStatus: AiStatus;
   aiJobId: string | null;
   notes: VideoNotes | null;
+  // True when BBDown only managed to grab a preview clip — usually a
+  // paid / member-only upload that the configured cookie didn't unlock.
+  isPaidPreview: boolean;
+  actualDurationSeconds: number | null;
   discoveredAt: string;
   updatedAt: string;
 }
@@ -122,8 +139,15 @@ export async function addCreator(payload: {
 
 export async function patchCreator(
   id: number,
-  // ``cookies: ""`` clears the stored value; ``undefined`` leaves it alone.
-  payload: { name?: string; autoDownload?: boolean; cookies?: string },
+  // ``cookies: ""`` clears the stored value; ``undefined`` leaves it
+  // alone. Same convention for tags: ``[]`` clears, ``undefined`` is
+  // a no-op.
+  payload: {
+    name?: string;
+    autoDownload?: boolean;
+    cookies?: string;
+    tags?: string[];
+  },
 ): Promise<Creator> {
   const { data } = await followClient.patch<Creator>(
     `/api/creators/${id}`,

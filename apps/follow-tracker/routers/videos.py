@@ -29,6 +29,8 @@ def _to_out(v: Video) -> VideoOut:
         ai_status=v.ai_status,
         ai_job_id=v.ai_job_id,
         notes=v.notes_json,  # validator parses JSON
+        is_paid_preview=bool(v.is_paid_preview),
+        actual_duration_seconds=v.actual_duration_seconds,
         discovered_at=v.discovered_at,
         updated_at=v.updated_at,
     )

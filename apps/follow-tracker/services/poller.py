@@ -30,6 +30,11 @@ from config import AUTO_AI_PROCESSING, STORAGE_PATH
 from db import Video, session_scope
 
 from .ai_client import AIClient, AIClientError
+from .media_probe import (
+    ffprobe_duration_seconds,
+    is_likely_paid_preview,
+    parse_expected_duration,
+)
 from .mediago_client import MediagoClient, MediagoClientError
 
 
@@ -124,13 +129,27 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
             # shows the user-facing video + notes.
             if file_path:
                 _cleanup_temp_dirs(os.path.dirname(file_path))
+
+            # Probe the file to spot paid-only videos that BBDown could
+            # only grab a preview clip of.
+            actual = ffprobe_duration_seconds(file_path) if file_path else None
+            expected = parse_expected_duration(row.duration)
+            paid = is_likely_paid_preview(actual, expected)
+
             with session_scope() as s:
                 v = s.get(Video, row.id)
                 if v is None:
                     continue
                 v.status = "succeeded"
                 v.file_path = file_path
+                v.actual_duration_seconds = int(actual) if actual else None
+                v.is_paid_preview = 1 if paid else 0
                 v.updated_at = dt.datetime.now(dt.timezone.utc)
+            if paid:
+                logger.info(
+                    "video %s flagged as paid-preview (actual=%.0fs vs expected=%ss)",
+                    row.id, actual or 0, expected,
+                )
             summary["promoted"] += 1
 
             if AUTO_AI_PROCESSING and file_path:
@@ -172,6 +191,19 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
             logger.warning("ai poll(%s) failed: %s", row.ai_job_id, exc)
             continue
         if data is None:
+            # ai-service has no record of this job_id — almost always
+            # means the service restarted (its job store is in-memory
+            # only). Reset so the catch-up pass re-submits.
+            logger.info(
+                "ai job %s for video %s vanished; clearing for resubmit",
+                row.ai_job_id, row.id,
+            )
+            with session_scope() as s:
+                v = s.get(Video, row.id)
+                if v is not None:
+                    v.ai_status = None
+                    v.ai_job_id = None
+                    v.updated_at = dt.datetime.now(dt.timezone.utc)
             continue
 
         status = data.get("status")

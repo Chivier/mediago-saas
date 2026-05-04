@@ -9,6 +9,7 @@ without auth tokens.
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -33,6 +34,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/creators")
 
 
+def _parse_tags(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(v, list):
+        return [str(t).strip() for t in v if str(t).strip()]
+    return []
+
+
+def _serialize_tags(tags: list[str] | None) -> str | None:
+    if tags is None:
+        return None
+    cleaned = [t.strip() for t in tags if isinstance(t, str) and t.strip()]
+    return json.dumps(cleaned, ensure_ascii=False) if cleaned else None
+
+
 @router.get("", response_model=CreatorListResponse)
 def list_creators() -> CreatorListResponse:
     with session_scope() as s:
@@ -48,6 +68,7 @@ def list_creators() -> CreatorListResponse:
                     name=c.name,
                     auto_download=bool(c.auto_download),
                     has_cookies=bool((c.cookies or "").strip()),
+                    tags=_parse_tags(c.tags),
                     last_checked_at=c.last_checked_at,
                     last_error=c.last_error,
                     created_at=c.created_at,
@@ -100,6 +121,7 @@ def add_creator(body: CreatorIn) -> CreatorOut:
             name=name,
             auto_download=1 if body.auto_download else 0,
             cookies=cookies,
+            tags=_serialize_tags(body.tags),
         )
         s.add(c)
         s.flush()
@@ -110,6 +132,7 @@ def add_creator(body: CreatorIn) -> CreatorOut:
             name=c.name,
             auto_download=bool(c.auto_download),
             has_cookies=bool(c.cookies),
+            tags=_parse_tags(c.tags),
             last_checked_at=c.last_checked_at,
             last_error=c.last_error,
             created_at=c.created_at,
@@ -131,6 +154,9 @@ def patch_creator(creator_id: int, body: CreatorPatch) -> CreatorOut:
             # Empty string clears; otherwise replace.
             stripped = body.cookies.strip()
             c.cookies = stripped or None
+        if body.tags is not None:
+            # Empty list clears; otherwise replace.
+            c.tags = _serialize_tags(body.tags)
         s.flush()
         count = s.scalar(select(func.count(Video.id)).where(Video.creator_id == c.id)) or 0
         return CreatorOut(
@@ -140,6 +166,7 @@ def patch_creator(creator_id: int, body: CreatorPatch) -> CreatorOut:
             name=c.name,
             auto_download=bool(c.auto_download),
             has_cookies=bool(c.cookies),
+            tags=_parse_tags(c.tags),
             last_checked_at=c.last_checked_at,
             last_error=c.last_error,
             created_at=c.created_at,

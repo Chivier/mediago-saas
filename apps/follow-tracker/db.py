@@ -68,6 +68,11 @@ class Creator(Base):
     # stored as the raw "k=v; k=v" cookie string the user pastes from
     # browser DevTools so we don't tie the format to one platform.
     cookies: Mapped[Optional[str]] = mapped_column(Text)
+    # Free-form labels for organizing creators in the UI. Stored as a
+    # JSON array of strings — e.g. ["哲学", "电影解说"]. NULL means
+    # "no tags". Kept as Text + JSON to avoid pulling in a separate
+    # tags table for what is essentially a per-creator chip list.
+    tags: Mapped[Optional[str]] = mapped_column(Text)
     last_checked_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
@@ -113,6 +118,12 @@ class Video(Base):
     status: Mapped[str] = mapped_column(String(16), default="discovered", nullable=False)
     download_id: Mapped[Optional[int]] = mapped_column(Integer)
     file_path: Mapped[Optional[str]] = mapped_column(Text)
+    # When the actual downloaded duration is materially shorter than the
+    # creator-reported video duration, the upload is almost always paid /
+    # member-only and BBDown only got the preview snippet. Surfaced in
+    # the UI so the user can decide to repurchase or skip.
+    is_paid_preview: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    actual_duration_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     # pending | processing | done | failed
     ai_status: Mapped[Optional[str]] = mapped_column(String(16))
     ai_job_id: Mapped[Optional[str]] = mapped_column(String(64))
@@ -140,12 +151,29 @@ def _migrate() -> None:
     every startup.
     """
     inspector = inspect(_engine)
-    if "creators" not in inspector.get_table_names():
-        return
-    have = {col["name"] for col in inspector.get_columns("creators")}
-    with _engine.begin() as conn:
-        if "cookies" not in have:
-            conn.execute(text("ALTER TABLE creators ADD COLUMN cookies TEXT"))
+    tables = inspector.get_table_names()
+    if "creators" in tables:
+        have = {col["name"] for col in inspector.get_columns("creators")}
+        with _engine.begin() as conn:
+            if "cookies" not in have:
+                conn.execute(text("ALTER TABLE creators ADD COLUMN cookies TEXT"))
+            if "tags" not in have:
+                conn.execute(text("ALTER TABLE creators ADD COLUMN tags TEXT"))
+    if "videos" in tables:
+        have = {col["name"] for col in inspector.get_columns("videos")}
+        with _engine.begin() as conn:
+            if "is_paid_preview" not in have:
+                conn.execute(
+                    text(
+                        "ALTER TABLE videos ADD COLUMN is_paid_preview INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+            if "actual_duration_seconds" not in have:
+                conn.execute(
+                    text(
+                        "ALTER TABLE videos ADD COLUMN actual_duration_seconds INTEGER"
+                    )
+                )
 
 
 @contextmanager

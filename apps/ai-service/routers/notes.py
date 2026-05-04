@@ -30,6 +30,7 @@ from pydantic import BaseModel, Field
 from models.schemas import JobStatus, SubtitleSegment
 from services.funasr_service import funasr_service
 from services.notes_service import generate_notes
+from services.polish_service import is_enabled as polish_enabled, polish
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,9 @@ class NotesJobResult(BaseModel):
     key_topics: list[str] = Field(default_factory=list)
     sections: list[dict[str, Any]] = Field(default_factory=list)
     mindmap: str = ""
+    entities: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    polished: bool = False
+    polish_notes: Optional[str] = None
     error: Optional[str] = None
     created_at: Optional[dt.datetime] = None
     updated_at: Optional[dt.datetime] = None
@@ -87,6 +91,9 @@ class _NotesJob:
     key_topics: list[str] = field(default_factory=list)
     sections: list[dict[str, Any]] = field(default_factory=list)
     mindmap: str = ""
+    entities: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    polished: bool = False
+    polish_notes: Optional[str] = None
     error: Optional[str] = None
     created_at: dt.datetime = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc))
     updated_at: dt.datetime = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc))
@@ -106,6 +113,9 @@ class _NotesJob:
             key_topics=self.key_topics,
             sections=self.sections,
             mindmap=self.mindmap,
+            entities=self.entities,
+            polished=self.polished,
+            polish_notes=self.polish_notes,
             error=self.error,
             created_at=self.created_at,
             updated_at=self.updated_at,
@@ -171,6 +181,32 @@ async def _run_notes(job_id: str) -> None:
         job.key_topics = notes["key_topics"]
         job.sections = notes["sections"]
         job.mindmap = notes["mindmap"]
+        # Stage 3: optional GPT-5.4 polish. Non-fatal — if the upstream
+        # endpoint hiccups, we keep the unpolished notes and mark
+        # polished=False. The dedicated repolish script can retry later.
+        if polish_enabled():
+            try:
+                polished = await polish(
+                    title=job.title,
+                    transcript=job.transcript,
+                    notes={
+                        "summary": job.summary,
+                        "key_topics": job.key_topics,
+                        "sections": job.sections,
+                        "mindmap": job.mindmap,
+                    },
+                )
+                if polished.get("polished"):
+                    job.summary = polished.get("summary", job.summary)
+                    job.key_topics = polished.get("key_topics", job.key_topics)
+                    job.sections = polished.get("sections", job.sections)
+                    job.mindmap = polished.get("mindmap", job.mindmap)
+                    job.entities = polished.get("entities", {}) or {}
+                    job.polish_notes = polished.get("polish_notes")
+                    job.polished = True
+                    logger.info("notes job %s: polished by %s", job_id, "GPT-5.4")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("notes job %s: polish step failed: %s", job_id, exc)
         job.status = JobStatus.done
         logger.info("notes job %s: done", job_id)
     except Exception as exc:  # noqa: BLE001
