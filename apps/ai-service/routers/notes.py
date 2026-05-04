@@ -62,6 +62,10 @@ class NotesJobResult(BaseModel):
     title: Optional[str] = None
     language: str = "zh"
     transcript: str = ""
+    # Same content as ``transcript`` but with one ``[hh:mm:ss] text`` line
+    # per FUNASR segment. Written to disk as transcript.txt by the
+    # follow-tracker poller — much easier to scan than the joined text.
+    transcript_timed: str = ""
     summary: str = ""
     key_topics: list[str] = Field(default_factory=list)
     sections: list[dict[str, Any]] = Field(default_factory=list)
@@ -87,6 +91,7 @@ class _NotesJob:
     language: str
     status: JobStatus = JobStatus.queued
     transcript: str = ""
+    transcript_timed: str = ""
     summary: str = ""
     key_topics: list[str] = field(default_factory=list)
     sections: list[dict[str, Any]] = field(default_factory=list)
@@ -109,6 +114,7 @@ class _NotesJob:
             title=self.title,
             language=self.language,
             transcript=self.transcript,
+            transcript_timed=self.transcript_timed,
             summary=self.summary,
             key_topics=self.key_topics,
             sections=self.sections,
@@ -120,6 +126,15 @@ class _NotesJob:
             created_at=self.created_at,
             updated_at=self.updated_at,
         )
+
+
+def _format_timestamp(seconds: float) -> str:
+    if seconds < 0:
+        seconds = 0
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 _jobs: dict[str, _NotesJob] = {}
@@ -167,7 +182,13 @@ async def _run_notes(job_id: str) -> None:
 
     # Persist transcript text upfront so partial failures still leave the
     # user with something useful.
+    # Plain transcript = joined text (used by the LLM prompt where
+    # timestamps are noise). Timed transcript = per-segment timestamped
+    # lines, written to transcript.txt on disk so users can scrub.
     job.transcript = "\n".join(seg.text for seg in segments)
+    job.transcript_timed = "\n".join(
+        f"[{_format_timestamp(seg.start)}] {seg.text}" for seg in segments
+    )
     job.touch()
 
     # 2. Summarize / structure

@@ -56,6 +56,7 @@ import {
   type FileEntry,
   type FileKind,
 } from "../api/files";
+import { MarkdownPreview } from "../components/MarkdownPreview";
 
 // Single source of truth for icon sizing in this page. Earlier some
 // rows used 14px and others 16px, which made them visibly mismatched
@@ -126,12 +127,16 @@ function PreviewDialog({
   const [textError, setTextError] = useState<string | null>(null);
 
   const kind = entry ? previewKind(entry.ext) : null;
+  // .md files render as actual markdown via MarkdownPreview, not raw
+  // text. Detect the special case here so the dialog branches on it.
+  const isMarkdown =
+    entry?.kind === "note" || entry?.ext.toLowerCase() === ".md";
   const url = entry ? getPreviewUrl(entry.path) : "";
 
   useEffect(() => {
     setTextContent(null);
     setTextError(null);
-    if (!entry || kind !== "text") return;
+    if (!entry || kind !== "text" || isMarkdown) return;
     const ctrl = new AbortController();
     fetch(url, { signal: ctrl.signal })
       .then((r) => {
@@ -143,7 +148,7 @@ function PreviewDialog({
         if (e.name !== "AbortError") setTextError(String(e));
       });
     return () => ctrl.abort();
-  }, [entry, kind, url]);
+  }, [entry, kind, isMarkdown, url]);
 
   return (
     <Dialog open={entry !== null} onOpenChange={(v) => !v && onClose()}>
@@ -172,7 +177,12 @@ function PreviewDialog({
               className="max-w-full max-h-[60vh] mx-auto"
             />
           )}
-          {entry && kind === "text" && (
+          {entry && isMarkdown && (
+            <div className="bg-background rounded p-4 max-h-[70vh] overflow-auto">
+              <MarkdownPreview url={url} />
+            </div>
+          )}
+          {entry && kind === "text" && !isMarkdown && (
             <div className="bg-muted rounded p-3 max-h-[60vh] overflow-auto">
               {textError ? (
                 <div className="text-destructive text-sm flex items-center gap-2">

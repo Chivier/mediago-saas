@@ -123,6 +123,7 @@ const PREVIEWABLE = new Set([
   ".txt",
   ".json",
   ".log",
+  ".md",
   ".png",
   ".jpg",
   ".jpeg",

@@ -216,10 +216,14 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
         elif status == "done":
             payload = {
                 "transcript": data.get("transcript", ""),
+                "transcript_timed": data.get("transcript_timed", ""),
                 "summary": data.get("summary", ""),
                 "key_topics": data.get("key_topics", []),
                 "sections": data.get("sections", []),
                 "mindmap": data.get("mindmap", ""),
+                "entities": data.get("entities") or {},
+                "polished": bool(data.get("polished")),
+                "polish_notes": data.get("polish_notes"),
             }
             with session_scope() as s:
                 v = s.get(Video, row.id)
@@ -362,7 +366,10 @@ def _write_notes_files(file_path: str, title: str, payload: dict[str, Any]) -> N
     except OSError as exc:
         logger.warning("could not write %s: %s", md_path, exc)
 
-    transcript = payload.get("transcript") or ""
+    # Prefer the timed transcript (each line `[hh:mm:ss] text`) so the
+    # user can locate moments in the video by scanning. Fall back to the
+    # plain joined text for older notes_json that predate the timed field.
+    transcript = payload.get("transcript_timed") or payload.get("transcript") or ""
     if transcript:
         try:
             with open(transcript_path, "w", encoding="utf-8") as f:
