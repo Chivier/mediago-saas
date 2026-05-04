@@ -22,6 +22,7 @@ from schemas import (
     CreatorPatch,
     RefreshSummary,
 )
+from services.credentials import effective_cookies
 from services.mediago_client import MediagoClient
 from services.refresh import refresh_creator
 from sources import resolve_bilibili_creator
@@ -69,9 +70,11 @@ def add_creator(body: CreatorIn) -> CreatorOut:
         if not candidate:
             raise HTTPException(status_code=400, detail="provide externalId (mid) or name")
         try:
-            # Resolve with the same cookies we'll persist — risk-control
-            # rejects the resolve API as readily as the search API.
-            mid, resolved = resolve_bilibili_creator(candidate, cookies=cookies)
+            # Resolve with whatever's most specific: explicit body override
+            # → platform-wide login → env var. Risk-control rejects the
+            # resolve API as readily as the search API.
+            resolve_cookies = effective_cookies(platform=platform, override=cookies)
+            mid, resolved = resolve_bilibili_creator(candidate, cookies=resolve_cookies)
         except SourceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         external_id = mid

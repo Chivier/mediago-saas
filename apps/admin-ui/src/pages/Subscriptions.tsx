@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
@@ -11,7 +11,11 @@ import {
   Download as DownloadIcon,
   X as XIcon,
   ExternalLink,
-  KeyRound,
+  QrCode,
+  CheckCircle2,
+  LogIn,
+  LogOut,
+  Pencil,
 } from "lucide-react";
 
 import {
@@ -65,11 +69,473 @@ import {
   fetchCreatorVideos,
   queueVideo,
   skipVideo,
+  startBiliQrLogin,
+  pollBiliQrLogin,
+  fetchPlatformLogins,
+  savePlatformLogin,
+  deletePlatformLogin,
   type Creator,
   type Platform,
   type FollowVideo,
+  type QrStart,
+  type QrPollStatus,
+  type PlatformLogin,
 } from "../api/follows";
 import { Mindmap } from "../components/Mindmap";
+
+// ─── Bilibili QR scan dialog ────────────────────────────────────────────────────
+
+const QR_POLL_INTERVAL_MS = 2000;
+
+function statusLabel(s: QrPollStatus | "idle"): {
+  text: string;
+  tone: "muted" | "info" | "success" | "danger";
+} {
+  switch (s) {
+    case "pending":
+      return { text: "Waiting for scan…", tone: "muted" };
+    case "scanned":
+      return { text: "Scanned — confirm on your phone", tone: "info" };
+    case "confirmed":
+      return { text: "Logged in", tone: "success" };
+    case "expired":
+      return { text: "QR expired — regenerate to try again", tone: "danger" };
+    case "error":
+      return { text: "Login failed", tone: "danger" };
+    default:
+      return { text: "", tone: "muted" };
+  }
+}
+
+function QrScanButton({
+  onSuccess,
+  variant = "outline",
+}: {
+  // Called once with the cookie blob when login confirms. Caller decides
+  // whether to drop it into a textarea or save it directly.
+  onSuccess: (cookies: string) => void;
+  variant?: "outline" | "default" | "ghost";
+}) {
+  const [open, setOpen] = useState(false);
+  const [qr, setQr] = useState<QrStart | null>(null);
+  const [status, setStatus] = useState<QrPollStatus | "idle">("idle");
+  const [message, setMessage] = useState<string>("");
+  const [starting, setStarting] = useState(false);
+  // Bumped to re-trigger the lifecycle effect (Regenerate button).
+  const [regenToken, setRegenToken] = useState(0);
+
+  // Drive the lifecycle from `open` + `regenToken` so closing the dialog
+  // reliably stops the poll loop and Regenerate restarts it. Once status
+  // reaches a terminal state the polling chain clears itself.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const poll = async (key: string) => {
+      if (cancelled) return;
+      try {
+        const result = await pollBiliQrLogin(key);
+        if (cancelled) return;
+        setStatus(result.status);
+        setMessage(result.message ?? "");
+        if (result.status === "confirmed" && result.cookies) {
+          onSuccess(result.cookies);
+          // Brief pause so the user sees the success state before close.
+          timer = window.setTimeout(() => {
+            if (!cancelled) setOpen(false);
+          }, 600);
+          return;
+        }
+        const terminal =
+          result.status === "expired" || result.status === "error";
+        if (!terminal) {
+          timer = window.setTimeout(() => poll(key), QR_POLL_INTERVAL_MS);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage((e as Error).message);
+      }
+    };
+
+    void (async () => {
+      setStarting(true);
+      setStatus("idle");
+      setMessage("");
+      setQr(null);
+      try {
+        const fresh = await startBiliQrLogin();
+        if (cancelled) return;
+        setQr(fresh);
+        setStatus("pending");
+        timer = window.setTimeout(
+          () => poll(fresh.qrcodeKey),
+          QR_POLL_INTERVAL_MS,
+        );
+      } catch (e) {
+        if (cancelled) return;
+        setStatus("error");
+        setMessage((e as Error).message);
+      } finally {
+        if (!cancelled) setStarting(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+    // onSuccess is intentionally excluded — callers pass an inline arrow,
+    // and we don't want a re-poll every render. Identity is captured at
+    // open-time which is the moment that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, regenToken]);
+
+  const regenerate = () => setRegenToken((t) => t + 1);
+
+  const label = statusLabel(status);
+  const isTerminal =
+    status === "confirmed" || status === "expired" || status === "error";
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button type="button" variant={variant} size="sm">
+          <QrCode size={14} />
+          Scan QR
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Bilibili QR login</DialogTitle>
+          <DialogDescription>
+            Open the Bilibili mobile app → top-left scan icon → point at the
+            code. Cookies stay on this server only.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col items-center gap-3 py-2">
+          <div className="relative h-56 w-56 rounded-md border bg-white flex items-center justify-center overflow-hidden">
+            {starting || !qr ? (
+              <Loader2
+                size={28}
+                className="animate-spin text-muted-foreground"
+              />
+            ) : (
+              <img
+                src={`data:image/png;base64,${qr.qrPngB64}`}
+                alt="Bilibili login QR"
+                className="h-full w-full object-contain"
+              />
+            )}
+            {status === "scanned" && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-blue-50/85 text-blue-700">
+                <CheckCircle2 size={36} />
+                <span className="text-sm font-medium">
+                  Confirm on your phone
+                </span>
+              </div>
+            )}
+            {status === "confirmed" && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-emerald-50/90 text-emerald-700">
+                <CheckCircle2 size={36} />
+                <span className="text-sm font-medium">Logged in</span>
+              </div>
+            )}
+            {status === "expired" && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-muted/90 text-muted-foreground text-sm">
+                <AlertCircle size={28} />
+                <span>QR expired</span>
+              </div>
+            )}
+          </div>
+
+          <div
+            className={
+              "text-sm " +
+              (label.tone === "success"
+                ? "text-emerald-600"
+                : label.tone === "danger"
+                  ? "text-destructive"
+                  : label.tone === "info"
+                    ? "text-blue-600"
+                    : "text-muted-foreground")
+            }
+          >
+            {label.text}
+            {message && status === "error" ? ` — ${message}` : null}
+          </div>
+        </div>
+
+        <DialogFooter className="gap-2">
+          {isTerminal && status !== "confirmed" && (
+            <Button type="button" variant="outline" onClick={regenerate}>
+              <RefreshCw size={14} />
+              Regenerate
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+          >
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Platform-level login card ─────────────────────────────────────────────────
+
+const PLATFORM_DISPLAY: Record<
+  Platform,
+  { name: string; supportsQr: boolean; note: string }
+> = {
+  bilibili: {
+    name: "Bilibili",
+    supportsQr: true,
+    note: "Scan to log in across all Bilibili creators. Required to fetch paid videos and to dodge risk-control on space queries.",
+  },
+  youtube: {
+    name: "YouTube",
+    supportsQr: false,
+    note: "Most public channels work without auth. Paste a cookies.txt header here only if you need to follow member-only / age-gated channels.",
+  },
+};
+
+function ManualCookiesDialog({
+  platform,
+  hasCookies,
+  onSaved,
+  trigger,
+}: {
+  platform: Platform;
+  hasCookies: boolean;
+  onSaved: () => void;
+  trigger: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const [cookies, setCookies] = useState("");
+  const mutation = useMutation({
+    mutationFn: (value: string) => savePlatformLogin(platform, value),
+    onSuccess: () => {
+      setOpen(false);
+      setCookies("");
+      onSaved();
+    },
+  });
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cookies.trim()) return;
+    mutation.mutate(cookies.trim());
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        setOpen(v);
+        if (!v) {
+          mutation.reset();
+          setCookies("");
+        }
+      }}
+    >
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>
+            {hasCookies ? "Update" : "Set"} {PLATFORM_DISPLAY[platform].name}{" "}
+            cookies
+          </DialogTitle>
+          <DialogDescription>
+            Paste a logged-in cookie row from DevTools → Application → Cookies.{" "}
+            {platform === "bilibili"
+              ? "SESSDATA + bili_jct are the most important fields."
+              : "Format: k=v; k=v; ..."}
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <Textarea
+            placeholder={
+              hasCookies
+                ? "(currently configured — paste a new value to replace)"
+                : "SESSDATA=xxx; bili_jct=yyy; buvid3=zzz; ..."
+            }
+            rows={5}
+            value={cookies}
+            onChange={(e) => setCookies(e.target.value)}
+            className="font-mono text-xs"
+            autoFocus
+          />
+          {mutation.isError && (
+            <div className="flex items-center gap-2 text-sm text-destructive">
+              <AlertCircle size={14} />
+              {(mutation.error as Error).message}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpen(false)}
+              disabled={mutation.isPending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={mutation.isPending || !cookies.trim()}
+            >
+              {mutation.isPending ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : null}
+              Save
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PlatformLoginRow({
+  login,
+  onChange,
+}: {
+  login: PlatformLogin;
+  onChange: () => void;
+}) {
+  const meta = PLATFORM_DISPLAY[login.platform];
+  // Bilibili-only: clicking "Login with QR" runs the QR flow then
+  // immediately PUTs the resulting blob to /platform-logins so the row
+  // updates without an extra step.
+  const qrSaveMut = useMutation({
+    mutationFn: (cookies: string) => savePlatformLogin(login.platform, cookies),
+    onSuccess: onChange,
+  });
+  const logoutMut = useMutation({
+    mutationFn: () => deletePlatformLogin(login.platform),
+    onSuccess: onChange,
+  });
+
+  return (
+    <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <h4 className="text-sm font-semibold">{meta.name}</h4>
+          {login.hasCookies ? (
+            <Badge variant="default" className="text-[10px] uppercase">
+              <CheckCircle2 size={10} className="mr-1" />
+              Logged in
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="text-[10px] uppercase">
+              Not logged in
+            </Badge>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground max-w-xl">{meta.note}</p>
+        {login.hasCookies && login.updatedAt && (
+          <p className="text-[11px] text-muted-foreground">
+            Updated {new Date(login.updatedAt).toLocaleString()}
+          </p>
+        )}
+      </div>
+      <div className="flex items-center gap-2 shrink-0">
+        {meta.supportsQr && (
+          <QrScanButton
+            onSuccess={(cookies) => qrSaveMut.mutate(cookies)}
+            variant={login.hasCookies ? "outline" : "default"}
+          />
+        )}
+        <ManualCookiesDialog
+          platform={login.platform}
+          hasCookies={login.hasCookies}
+          onSaved={onChange}
+          trigger={
+            <Button variant="outline" size="sm">
+              {login.hasCookies ? <Pencil size={14} /> : <LogIn size={14} />}
+              {login.hasCookies ? "Edit cookies" : "Paste cookies"}
+            </Button>
+          }
+        />
+        {login.hasCookies && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (
+                confirm(
+                  `Log out of ${meta.name}? Per-creator cookies (if any) keep working.`,
+                )
+              )
+                logoutMut.mutate();
+            }}
+            disabled={logoutMut.isPending}
+            className="text-destructive hover:text-destructive"
+          >
+            {logoutMut.isPending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <LogOut size={14} />
+            )}
+            Log out
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PlatformLoginsCard() {
+  const queryClient = useQueryClient();
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ["platform-logins"],
+    queryFn: fetchPlatformLogins,
+  });
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["platform-logins"] });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Platform logins</CardTitle>
+        <CardDescription>
+          One login covers all creators on that platform. Per-creator cookies
+          (set via the key icon on each row) take precedence when you need a
+          different account for a specific UP.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {isError && (
+          <div className="flex items-center gap-2 text-destructive text-sm">
+            <AlertCircle size={14} />
+            {(error as Error).message}
+          </div>
+        )}
+        {isLoading && !data ? (
+          <div className="space-y-2">
+            <div className="h-16 bg-muted rounded animate-pulse" />
+            <div className="h-16 bg-muted rounded animate-pulse" />
+          </div>
+        ) : (
+          (data?.items ?? []).map((login) => (
+            <PlatformLoginRow
+              key={login.platform}
+              login={login}
+              onChange={invalidate}
+            />
+          ))
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // ─── Add subscription dialog ────────────────────────────────────────────────────
 
@@ -79,7 +545,11 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
   const [externalId, setExternalId] = useState("");
   const [name, setName] = useState("");
   const [autoDownload, setAutoDownload] = useState(true);
-  const [cookies, setCookies] = useState("");
+
+  // Per-creator cookies were intentionally removed: the platform-level
+  // login at the top of the page covers every creator on that platform.
+  // Anyone needing platform-specific overrides can patch the row via the
+  // API directly.
 
   const mutation = useMutation({
     mutationFn: addCreator,
@@ -88,7 +558,6 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
       setExternalId("");
       setName("");
       setAutoDownload(true);
-      setCookies("");
       onAdded();
     },
   });
@@ -103,7 +572,6 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
       externalId: trimmedExternal || undefined,
       name: trimmedName || undefined,
       autoDownload,
-      cookies: cookies.trim() || undefined,
     });
   };
 
@@ -186,32 +654,9 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
               Auto-queue new uploads at mediago-core
             </Label>
           </div>
-          {platform === "bilibili" && (
-            <div className="space-y-2">
-              <Label htmlFor="sub-cookies">
-                Cookies{" "}
-                <span className="font-normal text-muted-foreground">
-                  (optional — needed for risk-control bypass and paid videos)
-                </span>
-              </Label>
-              <Textarea
-                id="sub-cookies"
-                placeholder="SESSDATA=xxx; bili_jct=yyy; buvid3=zzz; ..."
-                rows={3}
-                value={cookies}
-                onChange={(e) => setCookies(e.target.value)}
-                className="font-mono text-xs"
-              />
-              <p className="text-xs text-muted-foreground">
-                Open bilibili.com in a logged-in browser → DevTools →
-                Application → Cookies → copy the whole row as
-                <code className="mx-1 rounded bg-muted px-1">
-                  k=v; k=v; ...
-                </code>
-                . SESSDATA + bili_jct are the most important.
-              </p>
-            </div>
-          )}
+          {/* Per-creator cookies removed — the Bilibili / YouTube
+              platform-level login at the top of this page applies to
+              every creator without further input. */}
           {mutation.isError && (
             <div className="flex items-center gap-2 text-sm text-destructive">
               <AlertCircle size={14} />
@@ -234,127 +679,6 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
                 <Plus size={14} />
               )}
               Add
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ─── Per-creator cookies editor ────────────────────────────────────────────────
-
-function EditCookiesDialog({
-  creator,
-  onSaved,
-}: {
-  creator: Creator;
-  onSaved: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  // We never load existing cookies from the server (the API doesn't echo
-  // them back). Empty input on open means "leave alone unless I type
-  // something or hit Clear".
-  const [cookies, setCookies] = useState("");
-
-  const mutation = useMutation({
-    mutationFn: (value: string) => patchCreator(creator.id, { cookies: value }),
-    onSuccess: () => {
-      setOpen(false);
-      setCookies("");
-      onSaved();
-    },
-  });
-
-  const save = (e: React.FormEvent) => {
-    e.preventDefault();
-    mutation.mutate(cookies.trim());
-  };
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        setOpen(v);
-        if (!v) {
-          mutation.reset();
-          setCookies("");
-        }
-      }}
-    >
-      <DialogTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Edit cookies"
-          title={
-            creator.hasCookies
-              ? "Cookies configured — click to update"
-              : "Set cookies (needed for paid videos / risk-control bypass)"
-          }
-        >
-          <KeyRound
-            size={14}
-            className={creator.hasCookies ? "text-emerald-600" : ""}
-          />
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Cookies for {creator.name}</DialogTitle>
-          <DialogDescription>
-            {creator.platform === "bilibili"
-              ? "Paste a logged-in cookie row (SESSDATA + bili_jct minimum). Required to download paid/member-only videos and to dodge risk-control on space queries."
-              : "Auth cookies for this creator's source platform."}
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={save} className="space-y-3">
-          <Textarea
-            placeholder={
-              creator.hasCookies
-                ? "(currently configured — paste a new value to replace, or leave empty + click Clear to remove)"
-                : "SESSDATA=xxx; bili_jct=yyy; buvid3=zzz; ..."
-            }
-            rows={5}
-            value={cookies}
-            onChange={(e) => setCookies(e.target.value)}
-            className="font-mono text-xs"
-            autoFocus
-          />
-          {mutation.isError && (
-            <div className="flex items-center gap-2 text-sm text-destructive">
-              <AlertCircle size={14} />
-              {(mutation.error as Error).message}
-            </div>
-          )}
-          <DialogFooter className="gap-2">
-            {creator.hasCookies && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => mutation.mutate("")}
-                disabled={mutation.isPending}
-                className="text-destructive"
-              >
-                Clear cookies
-              </Button>
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setOpen(false)}
-              disabled={mutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={mutation.isPending || !cookies.trim()}
-            >
-              {mutation.isPending ? (
-                <Loader2 size={14} className="animate-spin" />
-              ) : null}
-              Save
             </Button>
           </DialogFooter>
         </form>
@@ -704,9 +1028,9 @@ function CreatorRow({
             className="flex items-center justify-end gap-1"
             onClick={(e) => e.stopPropagation()}
           >
-            {creator.platform === "bilibili" && (
-              <EditCookiesDialog creator={creator} onSaved={onChange} />
-            )}
+            {/* Per-creator cookie editor removed — the platform-level
+                login card at the top of the Subscriptions page covers
+                every creator. */}
             <Button
               variant="ghost"
               size="icon"
@@ -764,6 +1088,7 @@ export function Subscriptions() {
 
   return (
     <div className="space-y-4">
+      <PlatformLoginsCard />
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>

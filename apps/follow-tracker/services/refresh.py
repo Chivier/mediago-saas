@@ -17,7 +17,9 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from config import MAX_PAGES_PER_CREATOR
 from db import Creator, Video, find_video, session_scope
+from services.credentials import effective_cookies
 from sources import fetch_latest
 
 if TYPE_CHECKING:
@@ -50,20 +52,43 @@ def refresh_creator(creator_id: int, mediago: "MediagoClient | None" = None) -> 
         external_id = c.external_id
         creator_name = c.name
         auto_download = bool(c.auto_download)
-        cookies = c.cookies
+        creator_cookies = c.cookies
+
+    cookies = effective_cookies(platform=platform, creator_cookies=creator_cookies)
 
     try:
         consecutive_dupes = 0
-        for video in fetch_latest(platform, external_id, cookies=cookies):
+        # MAX_PAGES_PER_CREATOR caps the scan depth; we'd never actually
+        # walk that many because the 10-consecutive-duplicates early
+        # exit fires far sooner on subsequent runs. The cap matters on
+        # the FIRST scan of a creator's full backlog, so it should
+        # comfortably cover the largest channel we follow (~1300 videos
+        # for 木鱼水心 = 44 pages of 30).
+        #
+        # The early-exit semantics: only stop on consecutive duplicates
+        # AFTER discovering at least one new video. Otherwise the first
+        # initial-backfill run aborts on page 1 — every video was already
+        # imported by an earlier shallow scan, so the duplicates pile up
+        # before we ever walk past them to the older un-imported tail.
+        for video in fetch_latest(
+            platform,
+            external_id,
+            cookies=cookies,
+            max_pages=MAX_PAGES_PER_CREATOR,
+        ):
             with session_scope() as s:
                 existing = find_video(s, creator_id, video.external_id)
                 if existing:
                     consecutive_dupes += 1
-                    if consecutive_dupes >= CONSECUTIVE_DUPES_LIMIT:
+                    if (
+                        discovered > 0
+                        and consecutive_dupes >= CONSECUTIVE_DUPES_LIMIT
+                    ):
                         logger.info(
-                            "creator %s: hit %d consecutive duplicates, stopping",
+                            "creator %s: hit %d consecutive duplicates after discovering %d new, stopping",
                             creator_id,
                             CONSECUTIVE_DUPES_LIMIT,
+                            discovered,
                         )
                         break
                     continue

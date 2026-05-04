@@ -148,7 +148,7 @@ services:
       DB_PATH: /data/follow.db
       POLL_INTERVAL_HOURS: "6"
       DOWNLOAD_POLL_SECONDS: "60"
-      MAX_PAGES_PER_CREATOR: "5"
+      MAX_PAGES_PER_CREATOR: "100"
       AUTO_AI_PROCESSING: "true"
       RUN_AT_STARTUP: "false"
       # Optional: a SESSDATA cookie from a logged-in bilibili.com browser

@@ -15,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from db import init_db
-from routers import creators, health, videos
+from routers import bili_login, creators, health, platform_logins, videos
 from seed import maybe_bootstrap
 from services import scheduler
 
@@ -57,6 +57,8 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(creators.router, prefix="/api")
 app.include_router(videos.router, prefix="/api")
+app.include_router(bili_login.router, prefix="/api")
+app.include_router(platform_logins.router, prefix="/api")
 
 
 @app.get("/")

@@ -176,3 +176,76 @@ export async function skipVideo(id: number): Promise<FollowVideo> {
   );
   return data;
 }
+
+// ─── Bilibili QR login ─────────────────────────────────────────────────
+
+export interface QrStart {
+  qrcodeKey: string;
+  qrPngB64: string;
+  url: string;
+}
+
+// Status values are deliberately narrow because the UI switches on them.
+export type QrPollStatus =
+  | "pending"
+  | "scanned"
+  | "confirmed"
+  | "expired"
+  | "error";
+
+export interface QrPoll {
+  status: QrPollStatus;
+  message: string | null;
+  cookies: string | null;
+}
+
+export async function startBiliQrLogin(): Promise<QrStart> {
+  const { data } = await followClient.post<QrStart>("/api/bili-login/qr/start");
+  return data;
+}
+
+export async function pollBiliQrLogin(qrcodeKey: string): Promise<QrPoll> {
+  const { data } = await followClient.get<QrPoll>("/api/bili-login/qr/poll", {
+    params: { key: qrcodeKey },
+  });
+  return data;
+}
+
+// ─── Platform-level login credentials ──────────────────────────────────
+
+export interface PlatformLogin {
+  platform: Platform;
+  hasCookies: boolean;
+  updatedAt: string | null;
+}
+
+export interface PlatformLoginsResponse {
+  items: PlatformLogin[];
+}
+
+export async function fetchPlatformLogins(): Promise<PlatformLoginsResponse> {
+  const { data } = await followClient.get<PlatformLoginsResponse>(
+    "/api/platform-logins",
+  );
+  return data;
+}
+
+export async function savePlatformLogin(
+  platform: Platform,
+  cookies: string,
+): Promise<PlatformLogin> {
+  const { data } = await followClient.put<PlatformLogin>(
+    `/api/platform-logins/${platform}`,
+    { cookies },
+  );
+  return data;
+}
+
+export async function deletePlatformLogin(
+  platform: Platform,
+): Promise<PlatformLogin> {
+  const { data } = await followClient.delete<PlatformLogin>(
+    `/api/platform-logins/${platform}`,
+  );
+  return data;
+}

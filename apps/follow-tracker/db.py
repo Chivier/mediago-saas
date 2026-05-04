@@ -79,6 +79,24 @@ class Creator(Base):
     )
 
 
+class PlatformCredential(Base):
+    """Platform-level login cookies — one row per platform.
+
+    Acts as the *default* cookie blob for any creator on that platform
+    that doesn't have its own ``Creator.cookies`` override. Set via the
+    QR-scan flow on the Subscriptions page; falls through to the legacy
+    ``BILI_SESSDATA`` env var when the row is missing.
+    """
+
+    __tablename__ = "platform_credentials"
+
+    platform: Mapped[str] = mapped_column(String(16), primary_key=True)
+    cookies: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
 class Video(Base):
     __tablename__ = "videos"
 
