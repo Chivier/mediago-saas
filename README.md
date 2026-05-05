@@ -1,3 +1,9 @@
+> **⚠️ This repository has been superseded.**
+> The SaaS layer (ai-service, follow-tracker, admin-ui, restful) has
+> been extracted into [`Chivier/media-collector`](https://github.com/Chivier/media-collector),
+> which pulls in `caorushizi/mediago` as a clean git submodule.
+> All future work happens there. This repo is archived.
+
 <div align="center">
   <h1>MediaGo</h1>
   <a href="https://downloader.caorushizi.cn/en/guides.html?form=github">Quick Start</a>
