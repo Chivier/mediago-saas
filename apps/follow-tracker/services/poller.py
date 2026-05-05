@@ -30,12 +30,14 @@ from config import AUTO_AI_PROCESSING, STORAGE_PATH
 from db import Video, session_scope
 
 from .ai_client import AIClient, AIClientError
+from .download_failure import analyze_failure
 from .media_probe import (
     ffprobe_duration_seconds,
     is_likely_paid_preview,
     parse_expected_duration,
 )
 from .mediago_client import MediagoClient, MediagoClientError
+from .refresh import _download_type_for, safe_segment
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +45,14 @@ logger = logging.getLogger(__name__)
 
 def poll_once() -> dict:
     """Run one tick of the post-download poller. Returns counts for logs."""
-    summary = {"checked": 0, "promoted": 0, "ai_submitted": 0, "ai_done": 0}
+    summary = {
+        "checked": 0,
+        "promoted": 0,
+        "ai_submitted": 0,
+        "ai_done": 0,
+        "download_retried": 0,
+        "download_classified": 0,
+    }
 
     mediago = MediagoClient()
     ai = AIClient()
@@ -84,6 +93,20 @@ def _catch_up_missing_ai(ai: AIClient, summary: dict) -> None:
         )
 
     for row in rows:
+        if not row.file_path or not os.path.isfile(row.file_path):
+            logger.info(
+                "catch-up: skipping video %s because file_path is missing or not a file: %s",
+                row.id,
+                row.file_path,
+            )
+            with session_scope() as s:
+                v = s.get(Video, row.id)
+                if v is not None:
+                    v.file_path = None
+                    v.ai_status = None
+                    v.ai_job_id = None
+                    v.updated_at = dt.datetime.now(dt.timezone.utc)
+            continue
         try:
             job_id = ai.submit_notes(
                 file_path=row.file_path, title=row.title, language="zh"
@@ -108,7 +131,9 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
     with session_scope() as s:
         rows = list(
             s.scalars(
-                select(Video).where(Video.status == "queued").where(Video.download_id.is_not(None))
+                select(Video)
+                .where(Video.status.in_(["queued", "failed"]))
+                .where(Video.download_id.is_not(None))
             )
         )
 
@@ -142,13 +167,18 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
                     continue
                 v.status = "succeeded"
                 v.file_path = file_path
+                v.failure_category = None
+                v.failure_reason = None
+                v.failure_log_excerpt = None
                 v.actual_duration_seconds = int(actual) if actual else None
                 v.is_paid_preview = 1 if paid else 0
                 v.updated_at = dt.datetime.now(dt.timezone.utc)
             if paid:
                 logger.info(
                     "video %s flagged as paid-preview (actual=%.0fs vs expected=%ss)",
-                    row.id, actual or 0, expected,
+                    row.id,
+                    actual or 0,
+                    expected,
                 )
             summary["promoted"] += 1
 
@@ -167,11 +197,73 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
                         v.ai_job_id = job_id
                 summary["ai_submitted"] += 1
         elif status == "failed":
+            if _handle_failed_download(row, mediago, summary):
+                continue
             with session_scope() as s:
                 v = s.get(Video, row.id)
                 if v is not None:
                     v.status = "failed"
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
+
+
+def _handle_failed_download(row: Video, mediago: MediagoClient, summary: dict) -> bool:
+    now = dt.datetime.now(dt.timezone.utc)
+    try:
+        logs = mediago.get_download_logs(row.download_id)
+    except MediagoClientError as exc:
+        logger.warning("poll: get_download_logs(%s) failed: %s", row.download_id, exc)
+        logs = ""
+
+    analysis = analyze_failure(logs)
+    summary["download_classified"] += 1
+
+    with session_scope() as s:
+        v = s.get(Video, row.id)
+        if v is None:
+            return False
+        v.status = "failed"
+        v.failure_category = analysis.category
+        v.failure_reason = analysis.reason
+        v.failure_log_excerpt = analysis.excerpt or None
+        v.updated_at = now
+
+        if not _should_retry(v, analysis, now):
+            return False
+
+        try:
+            download_id = mediago.enqueue(
+                url=v.url,
+                download_type=_download_type_for(v.creator.platform),
+                name=safe_segment(v.title),
+                folder=f"{safe_segment(v.creator.name)}/{safe_segment(v.title)}",
+                start=True,
+            )
+        except MediagoClientError as exc:
+            v.failure_reason = f"{analysis.reason}; retry enqueue failed: {exc}"
+            v.updated_at = now
+            logger.warning("retry enqueue failed for video %s: %s", v.id, exc)
+            return False
+
+        v.download_id = download_id
+        v.retry_count = int(v.retry_count or 0) + 1
+        v.last_retry_at = now
+        v.status = "queued"
+        v.updated_at = now
+        summary["download_retried"] += 1
+        logger.info("video %s retry #%s after %s", v.id, v.retry_count, analysis.category)
+        return True
+
+
+def _should_retry(v: Video, analysis, now: dt.datetime) -> bool:
+    if not analysis.should_retry:
+        return False
+    retry_count = int(v.retry_count or 0)
+    if retry_count >= analysis.max_retries:
+        return False
+    if v.last_retry_at is None:
+        return True
+    elapsed = (now - v.last_retry_at).total_seconds()
+    return elapsed >= analysis.retry_delay_seconds
 
 
 def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
@@ -387,18 +479,26 @@ def _resolve_file_path(data: dict) -> Optional[str]:
     """
     for key in ("filePath", "file_path", "localPath", "local_path"):
         v = data.get(key)
-        if v and isinstance(v, str):
+        if v and isinstance(v, str) and os.path.isfile(v):
             return v
     folder = data.get("folder") or ""
     name = data.get("name") or ""
     if name:
-        candidate = os.path.join(STORAGE_PATH, folder, name) if folder else os.path.join(STORAGE_PATH, name)
-        if os.path.exists(candidate):
+        candidate = (
+            os.path.join(STORAGE_PATH, folder, name)
+            if folder
+            else os.path.join(STORAGE_PATH, name)
+        )
+        if os.path.isfile(candidate):
             return candidate
         # The downloader probably appended an extension. Try looking it up.
         parent = os.path.join(STORAGE_PATH, folder) if folder else STORAGE_PATH
         if os.path.isdir(parent):
-            for f in os.listdir(parent):
-                if f.startswith(name):
-                    return os.path.join(parent, f)
+            matches = [
+                os.path.join(parent, f)
+                for f in os.listdir(parent)
+                if os.path.isfile(os.path.join(parent, f)) and f.startswith(name)
+            ]
+            if len(matches) == 1:
+                return matches[0]
     return None

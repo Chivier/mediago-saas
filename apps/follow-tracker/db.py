@@ -118,6 +118,11 @@ class Video(Base):
     status: Mapped[str] = mapped_column(String(16), default="discovered", nullable=False)
     download_id: Mapped[Optional[int]] = mapped_column(Integer)
     file_path: Mapped[Optional[str]] = mapped_column(Text)
+    failure_category: Mapped[Optional[str]] = mapped_column(String(64))
+    failure_reason: Mapped[Optional[str]] = mapped_column(Text)
+    failure_log_excerpt: Mapped[Optional[str]] = mapped_column(Text)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_retry_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime(timezone=True))
     # When the actual downloaded duration is materially shorter than the
     # creator-reported video duration, the upload is almost always paid /
     # member-only and BBDown only got the preview snippet. Surfaced in
@@ -162,6 +167,20 @@ def _migrate() -> None:
     if "videos" in tables:
         have = {col["name"] for col in inspector.get_columns("videos")}
         with _engine.begin() as conn:
+            if "failure_category" not in have:
+                conn.execute(text("ALTER TABLE videos ADD COLUMN failure_category TEXT"))
+            if "failure_reason" not in have:
+                conn.execute(text("ALTER TABLE videos ADD COLUMN failure_reason TEXT"))
+            if "failure_log_excerpt" not in have:
+                conn.execute(text("ALTER TABLE videos ADD COLUMN failure_log_excerpt TEXT"))
+            if "retry_count" not in have:
+                conn.execute(
+                    text(
+                        "ALTER TABLE videos ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0"
+                    )
+                )
+            if "last_retry_at" not in have:
+                conn.execute(text("ALTER TABLE videos ADD COLUMN last_retry_at DATETIME"))
             if "is_paid_preview" not in have:
                 conn.execute(
                     text(

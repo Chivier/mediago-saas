@@ -67,6 +67,15 @@ class VideoOut(BaseModel):
     status: str
     download_id: Optional[int] = Field(default=None, serialization_alias="downloadId")
     file_path: Optional[str] = Field(default=None, serialization_alias="filePath")
+    failure_category: Optional[str] = Field(default=None, serialization_alias="failureCategory")
+    failure_reason: Optional[str] = Field(default=None, serialization_alias="failureReason")
+    failure_log_excerpt: Optional[str] = Field(
+        default=None, serialization_alias="failureLogExcerpt"
+    )
+    retry_count: int = Field(default=0, serialization_alias="retryCount")
+    last_retry_at: Optional[dt.datetime] = Field(
+        default=None, serialization_alias="lastRetryAt"
+    )
     ai_status: Optional[str] = Field(default=None, serialization_alias="aiStatus")
     ai_job_id: Optional[str] = Field(default=None, serialization_alias="aiJobId")
     notes: Optional[dict[str, Any]] = None

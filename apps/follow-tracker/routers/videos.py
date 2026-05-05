@@ -26,6 +26,11 @@ def _to_out(v: Video) -> VideoOut:
         status=v.status,
         download_id=v.download_id,
         file_path=v.file_path,
+        failure_category=v.failure_category,
+        failure_reason=v.failure_reason,
+        failure_log_excerpt=v.failure_log_excerpt,
+        retry_count=v.retry_count,
+        last_retry_at=v.last_retry_at,
         ai_status=v.ai_status,
         ai_job_id=v.ai_job_id,
         notes=v.notes_json,  # validator parses JSON

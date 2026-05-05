@@ -103,6 +103,11 @@ export interface FollowVideo {
   status: VideoStatus;
   downloadId: number | null;
   filePath: string | null;
+  failureCategory: string | null;
+  failureReason: string | null;
+  failureLogExcerpt: string | null;
+  retryCount: number;
+  lastRetryAt: string | null;
   aiStatus: AiStatus;
   aiJobId: string | null;
   notes: VideoNotes | null;

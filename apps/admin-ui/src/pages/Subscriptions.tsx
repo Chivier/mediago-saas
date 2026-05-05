@@ -691,7 +691,9 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
 
 function VideoNotesPanel({ video }: { video: FollowVideo }) {
   const notes = video.notes;
-  if (!notes) {
+  const failureInfo = video.status === "failed" &&
+    (video.failureReason || video.failureCategory || video.failureLogExcerpt);
+  if (!notes && !failureInfo) {
     return (
       <p className="text-sm text-muted-foreground italic px-2">
         AI notes not yet available ({video.aiStatus ?? "not started"}).
@@ -699,13 +701,14 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
     );
   }
   const hasEntities =
-    !!notes.entities &&
+    !!notes?.entities &&
     Object.values(notes.entities).some(
       (arr) => Array.isArray(arr) && arr.length > 0,
     );
   return (
-    <Tabs defaultValue="summary" className="w-full">
+    <Tabs defaultValue={failureInfo && !notes ? "failure" : "summary"} className="w-full">
       <TabsList>
+        {failureInfo && <TabsTrigger value="failure">Failure</TabsTrigger>}
         <TabsTrigger value="summary">Summary</TabsTrigger>
         <TabsTrigger value="sections">Sections</TabsTrigger>
         <TabsTrigger value="mindmap">Mindmap</TabsTrigger>
@@ -713,13 +716,45 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
         <TabsTrigger value="transcript">Transcript</TabsTrigger>
       </TabsList>
 
+      {failureInfo && (
+        <TabsContent value="failure" className="space-y-3 pt-2">
+          <div className="rounded border border-destructive/30 bg-destructive/5 p-3 space-y-2">
+            {video.failureReason && (
+              <p className="text-sm font-medium text-destructive">
+                {video.failureReason}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {video.failureCategory && (
+                <Badge variant="outline" className="text-[10px] uppercase">
+                  {video.failureCategory}
+                </Badge>
+              )}
+              {video.retryCount > 0 && (
+                <Badge variant="outline" className="text-[10px] uppercase">
+                  retry {video.retryCount}
+                </Badge>
+              )}
+              {video.lastRetryAt && (
+                <span>last retry {new Date(video.lastRetryAt).toLocaleString()}</span>
+              )}
+            </div>
+            {video.failureLogExcerpt && (
+              <pre className="text-xs whitespace-pre-wrap bg-background/70 rounded p-3 max-h-72 overflow-auto">
+                {video.failureLogExcerpt}
+              </pre>
+            )}
+          </div>
+        </TabsContent>
+      )}
+
       <TabsContent value="summary" className="space-y-3 pt-2">
-        {notes.summary && (
+        {notes?.summary && (
           <div className="text-sm leading-relaxed whitespace-pre-wrap">
             {notes.summary}
           </div>
         )}
-        {notes.key_topics && notes.key_topics.length > 0 && (
+        {notes?.key_topics && notes.key_topics.length > 0 && (
           <div>
             <h5 className="text-xs font-semibold uppercase text-muted-foreground mb-1">
               Key topics
@@ -733,10 +768,15 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
             </div>
           </div>
         )}
+        {!notes && (
+          <p className="text-sm text-muted-foreground italic">
+            AI notes not yet available ({video.aiStatus ?? "not started"}).
+          </p>
+        )}
       </TabsContent>
 
       <TabsContent value="sections" className="space-y-3 pt-2">
-        {!notes.sections?.length ? (
+        {!notes?.sections?.length ? (
           <p className="text-sm text-muted-foreground italic">
             No section breakdown.
           </p>
@@ -773,7 +813,7 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
       </TabsContent>
 
       <TabsContent value="mindmap" className="pt-2">
-        <Mindmap source={notes.mindmap || ""} />
+        <Mindmap source={notes?.mindmap || ""} />
       </TabsContent>
 
       {hasEntities && (
@@ -787,7 +827,7 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
               ["events", "事件"],
             ] as const
           ).map(([key, label]) => {
-            const items = (notes.entities ?? {})[key] ?? [];
+            const items = (notes?.entities ?? {})[key] ?? [];
             if (!items.length) return null;
             return (
               <div key={key}>
@@ -810,7 +850,7 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
               </div>
             );
           })}
-          {notes.polish_notes && (
+          {notes?.polish_notes && (
             <div className="border-t pt-3 mt-3">
               <h5 className="text-xs font-semibold uppercase text-muted-foreground mb-1">
                 Polish notes
@@ -824,7 +864,7 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
       )}
 
       <TabsContent value="transcript" className="pt-2">
-        {notes.transcript ? (
+        {notes?.transcript ? (
           <pre className="text-xs whitespace-pre-wrap bg-muted/50 rounded p-3 max-h-96 overflow-auto">
             {notes.transcript}
           </pre>
@@ -898,6 +938,28 @@ function VideoRow({
               {video.status}
             </Badge>
             {aiBadge}
+            {video.status === "failed" && video.failureCategory && (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase w-fit"
+                title={video.failureReason ?? video.failureCategory}
+              >
+                {video.failureCategory}
+              </Badge>
+            )}
+            {video.status === "failed" && video.retryCount > 0 && (
+              <Badge
+                variant="outline"
+                className="text-[10px] uppercase w-fit"
+                title={
+                  video.lastRetryAt
+                    ? `Last retry ${new Date(video.lastRetryAt).toLocaleString()}`
+                    : "Retried automatically"
+                }
+              >
+                retry {video.retryCount}
+              </Badge>
+            )}
             {video.isPaidPreview && (
               <Badge
                 variant="destructive"

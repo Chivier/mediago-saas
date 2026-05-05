@@ -78,6 +78,18 @@ class MediagoClient:
             return int(data["ids"][0])
         raise MediagoClientError(f"enqueue: unrecognized response shape: {envelope!r}")
 
+    def start_download(self, download_id: int) -> None:
+        try:
+            r = self._client.post(f"/api/downloads/{download_id}/start")
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise MediagoClientError(f"start_download failed: {exc}") from exc
+        envelope = r.json()
+        if not envelope.get("success"):
+            raise MediagoClientError(
+                f"start_download not successful: {envelope.get('message')}"
+            )
+
     # ------------------------------------------------------------------
     # Status polling
     # ------------------------------------------------------------------
@@ -97,6 +109,27 @@ class MediagoClient:
         if not envelope.get("success"):
             return None
         return envelope.get("data")
+
+    def get_download_logs(self, download_id: int) -> str:
+        try:
+            r = self._client.get(f"/api/downloads/{download_id}/logs")
+        except httpx.HTTPError as exc:
+            raise MediagoClientError(f"get_download_logs failed: {exc}") from exc
+        if r.status_code == 404:
+            return ""
+        try:
+            r.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise MediagoClientError(f"get_download_logs {r.status_code}: {exc}") from exc
+        envelope = r.json()
+        if not envelope.get("success"):
+            return ""
+        data = envelope.get("data")
+        if isinstance(data, dict):
+            return str(data.get("log") or "")
+        if isinstance(data, str):
+            return data
+        return ""
 
     def list_downloads(self, *, page: int = 1, page_size: int = 100) -> list[dict[str, Any]]:
         try:
