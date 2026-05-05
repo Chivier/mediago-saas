@@ -91,3 +91,64 @@ The UI adapter layer (`apps/ui/src/hooks/adapters/`) abstracts this: `electron.t
 - TypeScript, ES modules, 2-space indentation, UTF-8, LF endings
 - Components: PascalCase. Utilities: camelCase. Constants: SCREAMING_SNAKE_CASE
 - UI port: 8555 (strict). Go Core port: 9900. Player UI port: 8556
+
+## Upstream sync workflow
+
+This repo is a fork of `caorushizi/mediago` (registered as the `upstream`
+remote) with a SaaS layer added on top (`apps/ai-service`, `apps/follow-tracker`,
+`apps/admin-ui`, plus modifications to `apps/restful` and `docker-compose.yml`).
+Keep upstream code untouched whenever possible — the original mediago
+downloader is the load-bearing core and we want clean upgrades.
+
+**Never merge `upstream/master` directly into `master`.** Instead:
+
+1. Fetch and land upstream into a dedicated `raw` branch first:
+   ```bash
+   git fetch upstream
+   git checkout -B raw upstream/master    # raw = pristine snapshot of upstream
+   git push origin raw                    # publish for inspection
+   ```
+2. From `master`, merge `raw` (or rebase if the divergence is small):
+   ```bash
+   git checkout master
+   git merge raw                          # resolve conflicts in SaaS layer
+   ```
+3. SaaS-layer files (`apps/ai-service/**`, `apps/follow-tracker/**`,
+   `apps/admin-ui/**`, our additions to `apps/restful/**`, `docker-compose.yml`,
+   `.env.example`) should always win during conflict resolution — upstream has
+   no awareness of them. Files inside the upstream surface (`apps/core/**`,
+   `apps/ui/**`, `apps/electron/**`, `apps/server/**`, `apps/player-ui/**`,
+   `packages/**`) should generally take upstream's version unless we have a
+   documented reason to keep our patch.
+4. After merging, verify the SaaS services still build:
+   `pnpm install && pnpm build:web && docker compose build mediago-restful mediago-admin`.
+
+The `raw` branch is intentionally short-lived — overwrite it (`-B`) on every
+upstream pull. Its only purpose is to give a clean diff target for the merge
+commit and for `git log raw..master` to show "what's ours".
+
+## Custom SaaS layer (don't modify upstream files for this)
+
+All extension work belongs in:
+
+- `apps/ai-service/` — Python FastAPI on port 8899. FUNASR transcription +
+  Ollama/LM Studio summarization + GPT-5.4 polish. GPU semaphore with
+  configurable slot count.
+- `apps/follow-tracker/` — Python FastAPI on port 8900. APScheduler-driven
+  Bilibili/YouTube subscription tracking with a SQLite DB. Owns the failure
+  classifier and in-app retry loop (see `services/poller.py` +
+  `services/download_failure.py`).
+- `apps/admin-ui/` — React + Vite SPA on port 5174 (separate from `apps/ui`).
+  Talks to mediago-core via `/api/core`, restful via `/api/restful`,
+  ai-service via `/api/ai`, follow-tracker via `/api/follow`. All proxied
+  through the admin-ui nginx layer behind HTTP basic auth.
+- Modifications to `apps/restful/` — kept minimal; restful was rewritten to
+  proxy Go core via `MediaGoClient` instead of using the removed
+  `@mediago/shared-node`.
+- `docker-compose.yml` — wires mediago-core / restful / ai-service /
+  follow-tracker / admin-ui together with shared `/downloads` volume and
+  the `/api/*` nginx routing scheme.
+
+If a feature can be implemented entirely in the SaaS layer, do it there.
+Touching `apps/core` (Go) or `apps/ui` (electron+server React) requires the
+upstream-merge workflow above to keep working cleanly.
