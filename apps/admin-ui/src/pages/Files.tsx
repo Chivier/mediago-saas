@@ -8,6 +8,7 @@ import {
   FileImage,
   File as FileIcon,
   StickyNote,
+  Network,
   Captions,
   ChevronRight,
   Home,
@@ -57,6 +58,7 @@ import {
   type FileKind,
 } from "../api/files";
 import { MarkdownPreview } from "../components/MarkdownPreview";
+import { Markmap } from "../components/Markmap";
 
 // Single source of truth for icon sizing in this page. Earlier some
 // rows used 14px and others 16px, which made them visibly mismatched
@@ -83,6 +85,8 @@ function iconForEntry(entry: FileEntry) {
       return (
         <StickyNote size={ICON_PX} className={`${cls} text-emerald-500`} />
       );
+    case "mindmap":
+      return <Network size={ICON_PX} className={`${cls} text-cyan-500`} />;
     case "transcript":
     case "text":
       return <FileText size={ICON_PX} className={`${cls} text-yellow-500`} />;
@@ -109,6 +113,7 @@ const KIND_FILTERS: Array<{ value: FileKind | "all"; label: string }> = [
   { value: "all", label: "全部" },
   { value: "video", label: "视频" },
   { value: "note", label: "笔记 (notes.md)" },
+  { value: "mindmap", label: "思维导图 (mindmap.md)" },
   { value: "transcript", label: "转写稿" },
   { value: "subtitle", label: "字幕 (srt/vtt)" },
   { value: "audio", label: "音频" },
@@ -127,16 +132,37 @@ function PreviewDialog({
   const [textError, setTextError] = useState<string | null>(null);
 
   const kind = entry ? previewKind(entry.ext) : null;
-  // .md files render as actual markdown via MarkdownPreview, not raw
-  // text. Detect the special case here so the dialog branches on it.
+  // mindmap.md gets the markmap.js renderer (interactive tree). Other
+  // .md files render as static markdown via MarkdownPreview. Plain text
+  // takes the raw <pre> branch below.
+  const isMindmap = entry?.kind === "mindmap";
   const isMarkdown =
-    entry?.kind === "note" || entry?.ext.toLowerCase() === ".md";
+    !isMindmap &&
+    (entry?.kind === "note" || entry?.ext.toLowerCase() === ".md");
+  const [mindmapText, setMindmapText] = useState<string | null>(null);
   const url = entry ? getPreviewUrl(entry.path) : "";
+
+  useEffect(() => {
+    setMindmapText(null);
+    if (!isMindmap || !entry) return;
+    const ctrl = new AbortController();
+    fetch(url, { signal: ctrl.signal })
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.text();
+      })
+      .then(setMindmapText)
+      .catch(() => {
+        /* surfacing errors to the existing textError dialog branch is
+           overkill — Markmap component handles empty/invalid input */
+      });
+    return () => ctrl.abort();
+  }, [entry, isMindmap, url]);
 
   useEffect(() => {
     setTextContent(null);
     setTextError(null);
-    if (!entry || kind !== "text" || isMarkdown) return;
+    if (!entry || kind !== "text" || isMarkdown || isMindmap) return;
     const ctrl = new AbortController();
     fetch(url, { signal: ctrl.signal })
       .then((r) => {
@@ -177,12 +203,17 @@ function PreviewDialog({
               className="max-w-full max-h-[60vh] mx-auto"
             />
           )}
+          {entry && isMindmap && (
+            <div className="bg-background rounded p-4 max-h-[75vh] overflow-auto">
+              <Markmap source={mindmapText ?? ""} height={520} />
+            </div>
+          )}
           {entry && isMarkdown && (
             <div className="bg-background rounded p-4 max-h-[70vh] overflow-auto">
               <MarkdownPreview url={url} />
             </div>
           )}
-          {entry && kind === "text" && !isMarkdown && (
+          {entry && kind === "text" && !isMarkdown && !isMindmap && (
             <div className="bg-muted rounded p-3 max-h-[60vh] overflow-auto">
               {textError ? (
                 <div className="text-destructive text-sm flex items-center gap-2">

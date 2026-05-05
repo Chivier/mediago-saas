@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import { AlertCircle, Loader2 } from "lucide-react";
 
 import { Mindmap } from "./Mindmap";
+import { Markmap } from "./Markmap";
 
 interface MarkdownPreviewProps {
   // URL to fetch the .md file from. We pull at component-mount and
@@ -49,10 +50,10 @@ export function MarkdownPreview({ url }: MarkdownPreviewProps) {
     );
   }
 
-  // GitHub-flavoured markdown with custom code-fence handling: blocks
-  // tagged ```mermaid``` get rendered into actual diagrams via the
-  // existing Mindmap component (which can render any mermaid source,
-  // not just mindmaps).
+  // GitHub-flavoured markdown with custom code-fence handling: ```markmap```
+  // blocks render via the markmap.js component; ```mermaid``` blocks keep
+  // the legacy mermaid renderer for backward compat with notes.md files
+  // produced before the markmap migration.
   return (
     <div className="prose prose-sm max-w-none dark:prose-invert">
       <ReactMarkdown
@@ -63,9 +64,10 @@ export function MarkdownPreview({ url }: MarkdownPreviewProps) {
             const m = /language-(\w+)/.exec(className || "");
             const lang = m?.[1];
             const value = String(children).replace(/\n$/, "");
-            // Only fenced (multi-line) blocks should swap to mermaid;
-            // inline code keeps the default rendering.
             const isBlock = (className || "").includes("language-");
+            if (isBlock && lang === "markmap") {
+              return <Markmap source={value} />;
+            }
             if (isBlock && lang === "mermaid") {
               return <Mindmap source={value} />;
             }

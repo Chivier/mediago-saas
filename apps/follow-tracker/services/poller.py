@@ -419,10 +419,14 @@ def _format_section(idx: int, section: dict[str, Any]) -> str:
 
 
 def _render_notes_md(title: str, payload: dict[str, Any]) -> str:
+    """Render notes.md WITHOUT the mindmap — the mindmap lives in its own
+    mindmap.md file (markmap markdown format) and gets a link from here so
+    the reader can jump to it but the file viewer doesn't try to render
+    markmap source as part of the notes body."""
     summary = payload.get("summary") or ""
     key_topics = payload.get("key_topics") or []
     sections = payload.get("sections") or []
-    mindmap = (payload.get("mindmap") or "").strip()
+    has_mindmap = bool((payload.get("mindmap") or "").strip())
 
     out: list[str] = [f"# {title}", ""]
 
@@ -442,24 +446,25 @@ def _render_notes_md(title: str, payload: dict[str, Any]) -> str:
             out.append(_format_section(i, sec))
             out.append("")
 
-    if mindmap:
+    if has_mindmap:
         out.append("## 思维导图")
         out.append("")
-        out.append("```mermaid")
-        out.append(mindmap)
-        out.append("```")
+        out.append("见 [mindmap.md](./mindmap.md) — markmap 格式，可在 admin-ui Files 页面预览。")
         out.append("")
 
     return "\n".join(out).rstrip() + "\n"
 
 
 def _write_notes_files(file_path: str, title: str, payload: dict[str, Any]) -> None:
-    """Drop ``notes.md`` + ``transcript.txt`` next to ``file_path``.
+    """Drop ``notes.md`` + ``transcript.txt`` + ``mindmap.md`` next to
+    ``file_path``.
 
-    Using fixed names (notes.md, transcript.txt) makes them easy to find
-    and consistent across creators. The mp4's basename is preserved as-is
-    in the same dir; users can delete the mp4 and keep the notes (which
-    is exactly the workflow request — "有时候我们只存笔记就够用了").
+    Using fixed names (notes.md, transcript.txt, mindmap.md) makes them
+    easy to find and consistent across creators. The mp4's basename is
+    preserved as-is in the same dir; users can delete the mp4 and keep
+    the notes (which is exactly the workflow request — "有时候我们只存
+    笔记就够用了"). Mindmap is split out so it can be downloaded /
+    rendered independently in the Files page.
     """
     parent = os.path.dirname(file_path)
     if not parent or not os.path.isdir(parent):
@@ -469,6 +474,7 @@ def _write_notes_files(file_path: str, title: str, payload: dict[str, Any]) -> N
 
     md_path = os.path.join(parent, "notes.md")
     transcript_path = os.path.join(parent, "transcript.txt")
+    mindmap_path = os.path.join(parent, "mindmap.md")
 
     try:
         with open(md_path, "w", encoding="utf-8") as f:
@@ -486,6 +492,16 @@ def _write_notes_files(file_path: str, title: str, payload: dict[str, Any]) -> N
                 f.write(transcript)
         except OSError as exc:
             logger.warning("could not write %s: %s", transcript_path, exc)
+
+    mindmap = (payload.get("mindmap") or "").strip()
+    if mindmap:
+        # Always overwrite — markmap markdown is small and the LLM
+        # output should be deterministic enough that re-runs are fine.
+        try:
+            with open(mindmap_path, "w", encoding="utf-8") as f:
+                f.write(mindmap.rstrip() + "\n")
+        except OSError as exc:
+            logger.warning("could not write %s: %s", mindmap_path, exc)
 
 
 def _resolve_file_path(data: dict) -> Optional[str]:

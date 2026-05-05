@@ -47,7 +47,7 @@ def is_enabled() -> bool:
 _PROMPT = """\
 你是一位中文视频笔记的校对编辑。下面是 AI 生成的视频笔记草稿，FUNASR 转写 \
 + 本地 LLM 整理产生，可能含错别字、标点不规范、专有名词识别错误（人名、书名、 \
-术语等）。请基于转写稿对 summary / sections / key_topics / mindmap 做精校：
+术语等）。请基于转写稿对 summary / sections / key_topics 做精校：
 
 要求：
 - 修正错别字、同音字误识、断句错误
@@ -57,9 +57,9 @@ _PROMPT = """\
   "[名称?]" 的格式标注一个候选
 - 提取重要实体到 entities 字段，分类为 people / works / terms / places \
   / events，每条带一个简短解释
-- mindmap 字段是 Mermaid mindmap 语法，不要破坏结构，只修缮节点文字
 - summary 不要扩写，只精校
 - 必须输出严格 JSON，不要 markdown 围栏
+- 思维导图由独立的步骤生成，本步骤无需输出 mindmap 字段
 
 视频标题：{title}
 
@@ -80,7 +80,6 @@ _PROMPT = """\
   "sections": [
     {{ "title": "...", "timestamp": "...", "summary": "...", "key_points": ["..."], "details": "..." }}
   ],
-  "mindmap": "mindmap\\n  root((...))\\n    ...",
   "entities": {{
     "people":  [{{"name": "...", "note": "可选简介"}}],
     "works":   [{{"name": "...", "note": "..."}}],
@@ -200,7 +199,7 @@ async def polish(
     # Merge: keys present in `parsed` win, but anything missing falls
     # back to original notes — defensive in case the model drops a field.
     out = dict(notes)
-    for key in ("summary", "key_topics", "sections", "mindmap"):
+    for key in ("summary", "key_topics", "sections"):
         if key in parsed:
             out[key] = parsed[key]
     if "entities" in parsed and isinstance(parsed["entities"], dict):

@@ -82,7 +82,7 @@ import {
   type QrPollStatus,
   type PlatformLogin,
 } from "../api/follows";
-import { Mindmap } from "../components/Mindmap";
+import { Markmap } from "../components/Markmap";
 
 // ─── Bilibili QR scan dialog ────────────────────────────────────────────────────
 
@@ -692,7 +692,8 @@ function AddSubscriptionDialog({ onAdded }: { onAdded: () => void }) {
 
 function VideoNotesPanel({ video }: { video: FollowVideo }) {
   const notes = video.notes;
-  const failureInfo = video.status === "failed" &&
+  const failureInfo =
+    video.status === "failed" &&
     (video.failureReason || video.failureCategory || video.failureLogExcerpt);
   if (!notes && !failureInfo) {
     return (
@@ -707,7 +708,10 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
       (arr) => Array.isArray(arr) && arr.length > 0,
     );
   return (
-    <Tabs defaultValue={failureInfo && !notes ? "failure" : "summary"} className="w-full">
+    <Tabs
+      defaultValue={failureInfo && !notes ? "failure" : "summary"}
+      className="w-full"
+    >
       <TabsList>
         {failureInfo && <TabsTrigger value="failure">Failure</TabsTrigger>}
         <TabsTrigger value="summary">Summary</TabsTrigger>
@@ -737,7 +741,9 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
                 </Badge>
               )}
               {video.lastRetryAt && (
-                <span>last retry {new Date(video.lastRetryAt).toLocaleString()}</span>
+                <span>
+                  last retry {new Date(video.lastRetryAt).toLocaleString()}
+                </span>
               )}
             </div>
             {video.failureLogExcerpt && (
@@ -814,7 +820,7 @@ function VideoNotesPanel({ video }: { video: FollowVideo }) {
       </TabsContent>
 
       <TabsContent value="mindmap" className="pt-2">
-        <Mindmap source={notes?.mindmap || ""} />
+        <Markmap source={notes?.mindmap || ""} height={420} />
       </TabsContent>
 
       {hasEntities && (
@@ -900,7 +906,8 @@ function VideoRow({
       <Badge variant="outline" className="text-[10px] uppercase w-fit">
         AI {video.aiStatus}
       </Badge>
-      {video.aiStatus === "processing" && video.aiProgressPercent !== null &&
+      {video.aiStatus === "processing" &&
+      video.aiProgressPercent !== null &&
       video.aiProgressPercent !== undefined ? (
         <div className="space-y-1">
           <div className="flex items-center justify-between gap-2">

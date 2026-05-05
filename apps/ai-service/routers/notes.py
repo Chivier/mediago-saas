@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 
 from models.schemas import JobStatus, SubtitleSegment
 from services.funasr_service import funasr_service
+from services.mindmap_service import generate_mindmap
 from services.notes_service import generate_notes
 from services.polish_service import is_enabled as polish_enabled, polish
 
@@ -223,15 +224,14 @@ async def _run_notes(job_id: str) -> None:
         job.summary = notes["summary"]
         job.key_topics = notes["key_topics"]
         job.sections = notes["sections"]
-        job.mindmap = notes["mindmap"]
-        job.progress_percent = 88
+        job.progress_percent = 80
         # Stage 3: optional GPT-5.4 polish. Non-fatal — if the upstream
         # endpoint hiccups, we keep the unpolished notes and mark
         # polished=False. The dedicated repolish script can retry later.
         if polish_enabled():
             try:
                 job.stage = "polishing"
-                job.progress_percent = 92
+                job.progress_percent = 85
                 job.touch()
                 polished = await polish(
                     title=job.title,
@@ -240,20 +240,37 @@ async def _run_notes(job_id: str) -> None:
                         "summary": job.summary,
                         "key_topics": job.key_topics,
                         "sections": job.sections,
-                        "mindmap": job.mindmap,
                     },
                 )
                 if polished.get("polished"):
                     job.summary = polished.get("summary", job.summary)
                     job.key_topics = polished.get("key_topics", job.key_topics)
                     job.sections = polished.get("sections", job.sections)
-                    job.mindmap = polished.get("mindmap", job.mindmap)
                     job.entities = polished.get("entities", {}) or {}
                     job.polish_notes = polished.get("polish_notes")
                     job.polished = True
                     logger.info("notes job %s: polished by %s", job_id, "GPT-5.4")
             except Exception as exc:  # noqa: BLE001
                 logger.warning("notes job %s: polish step failed: %s", job_id, exc)
+        # Stage 4: generate mindmap with structured notes as context.
+        # Long videos (>30 min) get split into 10-min chunks here, with a
+        # GPT-5.4 merge at the end. Failure is non-fatal — empty mindmap
+        # just means the UI shows "No mindmap was generated".
+        try:
+            job.stage = "mindmap"
+            job.progress_percent = 92
+            job.touch()
+            job.mindmap = await generate_mindmap(
+                segments=segments,
+                title=job.title,
+                summary=job.summary,
+                key_topics=job.key_topics,
+                sections=job.sections,
+                language=job.language,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notes job %s: mindmap step failed: %s", job_id, exc)
+            job.mindmap = ""
         job.status = JobStatus.done
         job.stage = "done"
         job.progress_percent = 100

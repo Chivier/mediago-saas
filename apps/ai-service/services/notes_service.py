@@ -1,4 +1,4 @@
-"""Rich notes generation: transcript → structured study notes + mindmap.
+"""Rich notes generation: transcript → structured study notes.
 
 This is the heavier sibling of ``LMStudioService.summarize``. The
 follow-tracker calls ``POST /api/notes/generate`` after a download
@@ -8,7 +8,12 @@ LLM for a JSON document containing:
 * ``summary``      — 2-3 paragraph overall summary
 * ``key_topics``   — bullet list of major topics/themes
 * ``sections``     — chronological walk-through with timestamps
-* ``mindmap``      — Mermaid ``mindmap`` source for the admin-ui to render
+
+The mindmap used to be generated in this same call as a Mermaid
+``mindmap`` block. It's now a dedicated step (``mindmap_service``) that
+runs after polish — the structured notes feed into the mindmap prompt as
+explicit context, and long videos get split + GPT-merged. See
+``mindmap_service.py`` for the rationale.
 
 The Ollama model behind LMStudioService handles inference; this module
 just builds the right prompt and parses the JSON.
@@ -52,7 +57,6 @@ _NOTES_PROMPT_ZH = """\
 - summary 用 2-3 段话概括视频整体内容
 - key_topics 列出 3-8 个核心主题
 - sections 按视频章节切分，每节给出时间戳、标题、要点和 1-2 段详细内容
-- mindmap 输出 Mermaid mindmap 语法（必须以 `mindmap` 行开头，使用 root((...)) 作为根节点，2 空格缩进表示层级）
 
 只输出 JSON，不要 markdown 代码块包裹：
 
@@ -67,8 +71,7 @@ _NOTES_PROMPT_ZH = """\
       "key_points": ["要点1", "要点2"],
       "details": "本章节的详细内容讲解"
     }}
-  ],
-  "mindmap": "mindmap\\n  root((视频主题))\\n    分支1\\n      子点1\\n      子点2\\n    分支2"
+  ]
 }}
 """
 
@@ -85,7 +88,6 @@ Generate detailed study notes and output as a JSON document.
 - summary: 2-3 paragraph overview
 - key_topics: 3-8 core themes as a bullet list
 - sections: chronological breakdown, each with timestamp, title, key points, and a paragraph of details
-- mindmap: Mermaid mindmap syntax (must start with `mindmap`, use root((...)) as root, 2-space indent per level)
 
 Output JSON only, no markdown fences:
 
@@ -100,8 +102,7 @@ Output JSON only, no markdown fences:
       "key_points": ["point 1", "point 2"],
       "details": "expanded explanation"
     }}
-  ],
-  "mindmap": "mindmap\\n  root((Topic))\\n    Branch 1\\n      Sub-point\\n    Branch 2"
+  ]
 }}
 """
 
@@ -190,7 +191,7 @@ def _coerce_json(raw: str) -> dict[str, Any]:
                     except json.JSONDecodeError:
                         break
     logger.warning("notes: LLM JSON parse failed, falling back to stub")
-    return {"summary": cleaned[:2000], "key_topics": [], "sections": [], "mindmap": ""}
+    return {"summary": cleaned[:2000], "key_topics": [], "sections": []}
 
 
 async def generate_notes(
@@ -233,9 +234,10 @@ async def generate_notes(
     parsed = _coerce_json(raw)
 
     # Normalize fields so the admin-ui can render without surprises.
+    # Mindmap is intentionally omitted here — it's generated separately by
+    # mindmap_service after polish, with the structured notes as context.
     return {
         "summary": str(parsed.get("summary", "")),
         "key_topics": list(parsed.get("key_topics", []) or []),
         "sections": list(parsed.get("sections", []) or []),
-        "mindmap": str(parsed.get("mindmap", "")),
     }

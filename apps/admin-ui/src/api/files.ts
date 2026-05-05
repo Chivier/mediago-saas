@@ -7,6 +7,7 @@ export type FileKind =
   | "image"
   | "subtitle"
   | "note"
+  | "mindmap"
   | "transcript"
   | "text"
   | "other";

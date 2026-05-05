@@ -18,6 +18,7 @@ type FileKind =
   | "image"
   | "subtitle"
   | "note"
+  | "mindmap"
   | "transcript"
   | "text"
   | "other";
@@ -75,6 +76,7 @@ function classifyKind(name: string, isDir: boolean): FileKind {
   // distinguish it from generic text files.
   if (name === "transcript.txt" || name === "transcript.srt")
     return "transcript";
+  if (name === "mindmap.md") return "mindmap";
   if (name === "notes.md") return "note";
   return KIND_BY_EXT[ext] ?? "other";
 }
@@ -82,13 +84,14 @@ function classifyKind(name: string, isDir: boolean): FileKind {
 function parseKindFilter(raw: string): Set<FileKind> | null {
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed || trimmed === "all") return null;
-  const valid: FileKind[] = new Set([
+  const valid = new Set<FileKind>([
     "folder",
     "video",
     "audio",
     "image",
     "subtitle",
     "note",
+    "mindmap",
     "transcript",
     "text",
     "other",
