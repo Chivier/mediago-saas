@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { StatusBadge } from "../components/StatusBadge";
+import { Progress } from "../components/ui/progress";
 import {
   Table,
   TableBody,
@@ -50,6 +51,37 @@ import {
   type SubtitleLanguage,
   type SummaryLanguage,
 } from "../api/ai";
+
+function stageLabel(stage: string) {
+  switch (stage) {
+    case "queued":
+      return "Queued";
+    case "transcribing":
+      return "Transcribing";
+    case "summarizing":
+      return "Summarizing";
+    case "polishing":
+      return "Polishing";
+    case "done":
+      return "Done";
+    case "failed":
+      return "Failed";
+    default:
+      return stage;
+  }
+}
+
+function JobProgress({ stage, progressPercent }: { stage: string; progressPercent: number }) {
+  return (
+    <div className="flex flex-col gap-1 min-w-[150px]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs text-muted-foreground">{stageLabel(stage)}</span>
+        <span className="text-xs font-mono text-muted-foreground">{progressPercent}%</span>
+      </div>
+      <Progress value={progressPercent} className="h-2" />
+    </div>
+  );
+}
 
 // ─── Subtitle Tab ───────────────────────────────────────────────────────────────
 
@@ -169,6 +201,7 @@ function SubtitleJobsTable() {
           <TableHead>File</TableHead>
           <TableHead>Language</TableHead>
           <TableHead>Status</TableHead>
+          <TableHead className="hidden md:table-cell">Progress</TableHead>
           <TableHead className="hidden sm:table-cell">Created</TableHead>
           <TableHead className="text-right">Action</TableHead>
         </TableRow>
@@ -199,6 +232,12 @@ function SubtitleJobsTable() {
                   </span>
                 )}
               </div>
+            </TableCell>
+            <TableCell className="hidden md:table-cell">
+              <JobProgress
+                stage={job.stage}
+                progressPercent={job.progressPercent}
+              />
             </TableCell>
             <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap">
               {new Date(job.createdAt).toLocaleString()}
@@ -265,10 +304,7 @@ function SummaryForm({ onSuccess }: { onSuccess: () => void }) {
         </div>
         <div className="space-y-2">
           <Label htmlFor="summary-title">
-            Title{" "}
-            <span className="text-muted-foreground font-normal">
-              (optional)
-            </span>
+            Title <span className="text-muted-foreground font-normal">(optional)</span>
           </Label>
           <Input
             id="summary-title"
@@ -366,6 +402,9 @@ function SummaryJobRow({ job }: { job: import("../api/ai").SummaryJob }) {
             )}
           </div>
         </TableCell>
+        <TableCell className="hidden md:table-cell">
+          <JobProgress stage={job.stage} progressPercent={job.progressPercent} />
+        </TableCell>
         <TableCell className="hidden sm:table-cell text-xs text-muted-foreground whitespace-nowrap">
           {new Date(job.createdAt).toLocaleString()}
         </TableCell>
@@ -373,7 +412,7 @@ function SummaryJobRow({ job }: { job: import("../api/ai").SummaryJob }) {
 
       {expanded && hasSummary && (
         <TableRow className="bg-muted/20">
-          <TableCell colSpan={4} className="py-4 px-6">
+          <TableCell colSpan={5} className="py-4 px-6">
             <div className="space-y-3 max-w-3xl">
               {job.summary && (
                 <div>
@@ -391,9 +430,7 @@ function SummaryJobRow({ job }: { job: import("../api/ai").SummaryJob }) {
                   <ul className="space-y-1">
                     {job.keyPoints.map((point, i) => (
                       <li key={i} className="flex items-start gap-2 text-sm">
-                        <span className="text-primary font-medium mt-0.5">
-                          ·
-                        </span>
+                        <span className="text-primary font-medium mt-0.5">·</span>
                         <span>{point}</span>
                       </li>
                     ))}
@@ -447,6 +484,7 @@ function SummaryJobsTable() {
           <TableHead>File / Title</TableHead>
           <TableHead>Language</TableHead>
           <TableHead>Status</TableHead>
+          <TableHead className="hidden md:table-cell">Progress</TableHead>
           <TableHead className="hidden sm:table-cell">Created</TableHead>
         </TableRow>
       </TableHeader>
@@ -472,14 +510,12 @@ export function AIJobs() {
           <TabsTrigger value="summaries">Summaries</TabsTrigger>
         </TabsList>
 
-        {/* Subtitles Tab */}
         <TabsContent value="subtitles" className="space-y-6 mt-6">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Generate Subtitles</CardTitle>
               <CardDescription>
-                Submit a video or audio file to FUNASR for speech-to-text
-                transcription.
+                Submit a video or audio file to FUNASR for speech-to-text transcription.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -504,14 +540,12 @@ export function AIJobs() {
           </Card>
         </TabsContent>
 
-        {/* Summaries Tab */}
         <TabsContent value="summaries" className="space-y-6 mt-6">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Generate Summary</CardTitle>
               <CardDescription>
-                Submit a file path for LM Studio summarization. Expand completed
-                jobs to view results.
+                Submit a file path for LM Studio summarization. Expand completed jobs to view results.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -527,7 +561,7 @@ export function AIJobs() {
             <CardHeader>
               <CardTitle className="text-base">Summary Jobs</CardTitle>
               <CardDescription>
-                Click any completed row to expand the summary and key points.
+                Track stage/progress and expand completed jobs to inspect results.
               </CardDescription>
             </CardHeader>
             <CardContent className="p-0">

@@ -1,25 +1,3 @@
-"""Video summarization router.
-
-Endpoints
----------
-POST /api/summarize/video
-    Accept a file path (+ optional pre-computed subtitles), enqueue a
-    background summarization job, return job id.
-
-GET /api/summarize/jobs/{job_id}
-    Poll job status and retrieve summary results.
-
-Pipeline
---------
-1. If ``subtitles`` are provided in the request, skip FUNASR.
-2. Otherwise, run FUNASR transcription first (holds 1 GPU slot).
-3. Run LM Studio summarization (holds 1 GPU slot).
-
-Steps 1 and 2 are sequential within the same job so they never hold 2 slots
-simultaneously.  Two *different* jobs can overlap (1 GPU slot each), which
-is the intended max-2 concurrent GPU tasks behaviour.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -31,6 +9,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Path
 from datetime import datetime, timezone
 
 from models.schemas import (
+    JobStage,
     JobStatus,
     SubtitleSegment,
     SummarizeJob,
@@ -68,6 +47,8 @@ async def _run_summarize(job_id: str) -> None:
         return
 
     job.status = JobStatus.processing
+    job.stage = JobStage.queued
+    job.progress_percent = 5
     job.updated_at = datetime.now(timezone.utc)
     logger.info("Summarize job %s started for: %s", job_id, job.file_path)
 
@@ -77,6 +58,8 @@ async def _run_summarize(job_id: str) -> None:
     segments: list[SubtitleSegment]
 
     if job.subtitles:
+        job.stage = JobStage.transcribing
+        job.progress_percent = 35
         segments = job.subtitles
         logger.info(
             "Summarize job %s: using %d pre-supplied subtitle segments",
@@ -84,12 +67,15 @@ async def _run_summarize(job_id: str) -> None:
             len(segments),
         )
     else:
+        job.stage = JobStage.transcribing
+        job.progress_percent = 15
         logger.info("Summarize job %s: running FUNASR transcription first…", job_id)
         try:
             segments = await funasr_service.transcribe(
                 file_path=job.file_path,
                 language="auto",
             )
+            job.progress_percent = 55
             logger.info(
                 "Summarize job %s: transcription done — %d segments",
                 job_id,
@@ -97,6 +83,8 @@ async def _run_summarize(job_id: str) -> None:
             )
         except FileNotFoundError as exc:
             job.status = JobStatus.failed
+            job.stage = JobStage.failed
+            job.progress_percent = 100
             job.error = str(exc)
             logger.warning(
                 "Summarize job %s failed at transcription (file not found): %s",
@@ -106,6 +94,8 @@ async def _run_summarize(job_id: str) -> None:
             return
         except Exception as exc:
             job.status = JobStatus.failed
+            job.stage = JobStage.failed
+            job.progress_percent = 100
             job.error = f"Transcription error: {exc}"
             logger.exception(
                 "Summarize job %s failed at transcription: %s", job_id, exc
@@ -114,6 +104,8 @@ async def _run_summarize(job_id: str) -> None:
 
     if not segments:
         job.status = JobStatus.failed
+        job.stage = JobStage.failed
+        job.progress_percent = 100
         job.error = "No subtitles could be extracted from the file."
         job.updated_at = datetime.now(timezone.utc)
         logger.warning("Summarize job %s: no segments after transcription", job_id)
@@ -122,6 +114,8 @@ async def _run_summarize(job_id: str) -> None:
     # ------------------------------------------------------------------
     # Step 2: LLM summarization
     # ------------------------------------------------------------------
+    job.stage = JobStage.summarizing
+    job.progress_percent = 70
     logger.info("Summarize job %s: calling LM Studio…", job_id)
     try:
         result = await lmstudio_service.summarize(
@@ -133,9 +127,13 @@ async def _run_summarize(job_id: str) -> None:
         job.key_points = result.get("key_points", [])
         job.topic = result.get("topic", "")
         job.status = JobStatus.done
+        job.stage = JobStage.done
+        job.progress_percent = 100
         logger.info("Summarize job %s done.", job_id)
     except Exception as exc:
         job.status = JobStatus.failed
+        job.stage = JobStage.failed
+        job.progress_percent = 100
         job.error = f"LLM summarization error: {exc}"
         logger.exception("Summarize job %s failed at LLM step: %s", job_id, exc)
     finally:

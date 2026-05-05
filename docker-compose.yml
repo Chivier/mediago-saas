@@ -58,14 +58,14 @@ services:
       - --local-dir=/downloads
       - --db-path=/data/mediago.db
       - --config-dir=/data
-      - --enable-auth=false
+      - --max-runner=1
     ports:
       - "127.0.0.1:8080:8080"
     environment:
       PORT: "8080"
       GIN_MODE: release
       DB_PATH: /data/mediago.db
-      MAX_RUNNER: "4"
+      MAX_RUNNER: "1"
       DELETE_SEGMENTS: "true"
     volumes:
       - /chivier-disk/mediago-saas/downloads:/downloads

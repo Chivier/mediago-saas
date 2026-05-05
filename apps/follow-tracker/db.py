@@ -132,6 +132,8 @@ class Video(Base):
     # pending | processing | done | failed
     ai_status: Mapped[Optional[str]] = mapped_column(String(16))
     ai_job_id: Mapped[Optional[str]] = mapped_column(String(64))
+    ai_stage: Mapped[Optional[str]] = mapped_column(String(32))
+    ai_progress_percent: Mapped[Optional[int]] = mapped_column(Integer)
     notes_json: Mapped[Optional[str]] = mapped_column(Text)
     discovered_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
@@ -181,6 +183,10 @@ def _migrate() -> None:
                 )
             if "last_retry_at" not in have:
                 conn.execute(text("ALTER TABLE videos ADD COLUMN last_retry_at DATETIME"))
+            if "ai_stage" not in have:
+                conn.execute(text("ALTER TABLE videos ADD COLUMN ai_stage TEXT"))
+            if "ai_progress_percent" not in have:
+                conn.execute(text("ALTER TABLE videos ADD COLUMN ai_progress_percent INTEGER"))
             if "is_paid_preview" not in have:
                 conn.execute(
                     text(

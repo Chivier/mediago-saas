@@ -27,6 +27,7 @@ import {
 } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
+import { Progress } from "../components/ui/progress";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Textarea } from "../components/ui/textarea";
@@ -895,9 +896,25 @@ function VideoRow({
     onSuccess: onAfterAction,
   });
   const aiBadge = video.aiStatus ? (
-    <Badge variant="outline" className="text-[10px] uppercase">
-      AI {video.aiStatus}
-    </Badge>
+    <div className="space-y-1 min-w-[140px]">
+      <Badge variant="outline" className="text-[10px] uppercase w-fit">
+        AI {video.aiStatus}
+      </Badge>
+      {video.aiStatus === "processing" && video.aiProgressPercent !== null &&
+      video.aiProgressPercent !== undefined ? (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] text-muted-foreground uppercase">
+              {video.aiStage ?? "processing"}
+            </span>
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {video.aiProgressPercent}%
+            </span>
+          </div>
+          <Progress value={video.aiProgressPercent} className="h-2 w-32" />
+        </div>
+      ) : null}
+    </div>
   ) : null;
 
   return (

@@ -25,6 +25,7 @@ from fastapi.responses import PlainTextResponse
 from datetime import datetime, timezone
 
 from models.schemas import (
+    JobStage,
     JobStatus,
     SubtitleJob,
     SubtitleJobResult,
@@ -55,6 +56,8 @@ async def _run_transcription(job_id: str) -> None:
         return
 
     job.status = JobStatus.processing
+    job.stage = JobStage.transcribing
+    job.progress_percent = 10
     job.updated_at = datetime.now(timezone.utc)
     logger.info("Transcription job %s started for: %s", job_id, job.file_path)
 
@@ -66,15 +69,21 @@ async def _run_transcription(job_id: str) -> None:
         job.subtitles = segments
         job.srt_content = build_srt(segments)
         job.status = JobStatus.done
+        job.stage = JobStage.done
+        job.progress_percent = 100
         logger.info(
             "Transcription job %s done — %d segments", job_id, len(segments)
         )
     except FileNotFoundError as exc:
         job.status = JobStatus.failed
+        job.stage = JobStage.failed
+        job.progress_percent = 100
         job.error = str(exc)
         logger.warning("Transcription job %s failed (file not found): %s", job_id, exc)
     except Exception as exc:
         job.status = JobStatus.failed
+        job.stage = JobStage.failed
+        job.progress_percent = 100
         job.error = f"Transcription error: {exc}"
         logger.exception("Transcription job %s failed: %s", job_id, exc)
     finally:

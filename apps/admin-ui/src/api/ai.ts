@@ -1,9 +1,16 @@
 import { aiClient } from "./client";
 
-// ─── Subtitle types ────────────────────────────────────────────────────────────
+// ─── Shared AI job progress types ───────────────────────────────────────────────
 
 export type SubtitleLanguage = "auto" | "zh" | "en" | "ja" | "ko";
 export type JobStatus = "queued" | "processing" | "done" | "failed";
+export type JobStage =
+  | "queued"
+  | "transcribing"
+  | "summarizing"
+  | "polishing"
+  | "done"
+  | "failed";
 
 export interface SubtitleSegment {
   start: number;
@@ -16,6 +23,8 @@ export interface SubtitleJob {
   filePath: string;
   language: SubtitleLanguage;
   status: JobStatus;
+  stage: JobStage;
+  progressPercent: number;
   segments?: SubtitleSegment[];
   error?: string;
   createdAt: string;
@@ -32,11 +41,11 @@ export interface SubmitSubtitlePayload {
   language?: SubtitleLanguage;
 }
 
-// FastAPI returns snake_case; the table renderers expect camelCase. Normalize
-// at the boundary so the rest of the UI stays in one shape.
 type RawSubtitleJob = {
   job_id: string;
   status: JobStatus;
+  stage?: JobStage;
+  progress_percent?: number;
   file_path?: string;
   language?: SubtitleLanguage;
   subtitles?: SubtitleSegment[];
@@ -51,6 +60,8 @@ function adaptSubtitle(raw: RawSubtitleJob): SubtitleJob {
     filePath: raw.file_path ?? "",
     language: (raw.language ?? "auto") as SubtitleLanguage,
     status: raw.status,
+    stage: (raw.stage ?? (raw.status === "done" ? "done" : raw.status === "failed" ? "failed" : raw.status === "processing" ? "transcribing" : "queued")) as JobStage,
+    progressPercent: raw.progress_percent ?? (raw.status === "done" ? 100 : raw.status === "failed" ? 100 : raw.status === "processing" ? 50 : 0),
     segments: raw.subtitles,
     error: raw.error ?? undefined,
     createdAt: raw.created_at ?? new Date().toISOString(),
@@ -97,6 +108,8 @@ export interface SummaryJob {
   title?: string;
   language: SummaryLanguage;
   status: JobStatus;
+  stage: JobStage;
+  progressPercent: number;
   summary?: string;
   keyPoints?: string[];
   topic?: string;
@@ -119,6 +132,8 @@ export interface SubmitSummaryPayload {
 type RawSummaryJob = {
   job_id: string;
   status: JobStatus;
+  stage?: JobStage;
+  progress_percent?: number;
   file_path?: string;
   title?: string | null;
   language?: SummaryLanguage;
@@ -137,6 +152,8 @@ function adaptSummary(raw: RawSummaryJob): SummaryJob {
     title: raw.title ?? undefined,
     language: (raw.language ?? "auto") as SummaryLanguage,
     status: raw.status,
+    stage: (raw.stage ?? (raw.status === "done" ? "done" : raw.status === "failed" ? "failed" : raw.status === "processing" ? "summarizing" : "queued")) as JobStage,
+    progressPercent: raw.progress_percent ?? (raw.status === "done" ? 100 : raw.status === "failed" ? 100 : raw.status === "processing" ? 60 : 0),
     summary: raw.summary,
     keyPoints: raw.key_points,
     topic: raw.topic,
@@ -145,6 +162,7 @@ function adaptSummary(raw: RawSummaryJob): SummaryJob {
     updatedAt: raw.updated_at ?? undefined,
   };
 }
+
 
 export async function fetchSummaryJobs(): Promise<SummaryJobsResponse> {
   const { data } = await aiClient.get<{
@@ -169,4 +187,85 @@ export async function submitSummaryJob(
     },
   );
   return { jobId: data.job_id, status: data.status };
+}
+
+export interface NotesJob {
+  id: string;
+  filePath: string;
+  title?: string;
+  language: SummaryLanguage;
+  status: JobStatus;
+  stage: JobStage;
+  progressPercent: number;
+  transcript?: string;
+  transcriptTimed?: string;
+  summary?: string;
+  keyTopics?: string[];
+  sections?: Array<Record<string, unknown>>;
+  mindmap?: string;
+  polished?: boolean;
+  polishNotes?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface NotesJobsResponse {
+  items: NotesJob[];
+  total: number;
+}
+
+type RawNotesJob = {
+  job_id: string;
+  status: JobStatus;
+  stage?: JobStage;
+  progress_percent?: number;
+  file_path?: string;
+  title?: string | null;
+  language?: SummaryLanguage;
+  transcript?: string;
+  transcript_timed?: string;
+  summary?: string;
+  key_topics?: string[];
+  sections?: Array<Record<string, unknown>>;
+  mindmap?: string;
+  polished?: boolean;
+  polish_notes?: string | null;
+  error?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+function adaptNotes(raw: RawNotesJob): NotesJob {
+  return {
+    id: raw.job_id,
+    filePath: raw.file_path ?? "",
+    title: raw.title ?? undefined,
+    language: (raw.language ?? "zh") as SummaryLanguage,
+    status: raw.status,
+    stage: (raw.stage ?? (raw.status === "done" ? "done" : raw.status === "failed" ? "failed" : raw.status === "processing" ? "transcribing" : "queued")) as JobStage,
+    progressPercent: raw.progress_percent ?? (raw.status === "done" ? 100 : raw.status === "failed" ? 100 : raw.status === "processing" ? 50 : 0),
+    transcript: raw.transcript,
+    transcriptTimed: raw.transcript_timed,
+    summary: raw.summary,
+    keyTopics: raw.key_topics,
+    sections: raw.sections,
+    mindmap: raw.mindmap,
+    polished: raw.polished,
+    polishNotes: raw.polish_notes ?? undefined,
+    error: raw.error ?? undefined,
+    createdAt: raw.created_at ?? new Date().toISOString(),
+    updatedAt: raw.updated_at ?? undefined,
+  };
+}
+
+export async function fetchNotesJobs(): Promise<NotesJobsResponse> {
+  const { data } = await aiClient.get<{
+    items: RawNotesJob[];
+    total: number;
+  }>("/api/notes/jobs");
+  return {
+    items: data.items.map(adaptNotes),
+    total: data.total,
+  };
 }

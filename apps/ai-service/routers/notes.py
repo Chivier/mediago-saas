@@ -58,6 +58,8 @@ class NotesJobQueued(BaseModel):
 class NotesJobResult(BaseModel):
     job_id: str
     status: JobStatus
+    stage: str = "queued"
+    progress_percent: int = Field(default=0, ge=0, le=100)
     file_path: str = ""
     title: Optional[str] = None
     language: str = "zh"
@@ -90,6 +92,8 @@ class _NotesJob:
     title: Optional[str]
     language: str
     status: JobStatus = JobStatus.queued
+    stage: str = "queued"
+    progress_percent: int = 0
     transcript: str = ""
     transcript_timed: str = ""
     summary: str = ""
@@ -110,6 +114,8 @@ class _NotesJob:
         return NotesJobResult(
             job_id=self.job_id,
             status=self.status,
+            stage=self.stage,
+            progress_percent=self.progress_percent,
             file_path=self.file_path,
             title=self.title,
             language=self.language,
@@ -151,24 +157,35 @@ async def _run_notes(job_id: str) -> None:
         return
 
     job.status = JobStatus.processing
+    job.stage = "queued"
+    job.progress_percent = 5
     job.touch()
     logger.info("notes job %s: starting (file=%s)", job_id, job.file_path)
 
     # 1. Transcribe
     segments: list[SubtitleSegment] = []
     try:
+        job.stage = "transcribing"
+        job.progress_percent = 15
+        job.touch()
         segments = await funasr_service.transcribe(
             file_path=job.file_path,
             language="auto",
         )
+        job.progress_percent = 55
+        job.touch()
     except FileNotFoundError as exc:
         job.status = JobStatus.failed
+        job.stage = "failed"
+        job.progress_percent = 100
         job.error = str(exc)
         job.touch()
         logger.warning("notes job %s: file not found: %s", job_id, exc)
         return
     except Exception as exc:  # noqa: BLE001
         job.status = JobStatus.failed
+        job.stage = "failed"
+        job.progress_percent = 100
         job.error = f"transcription error: {exc}"
         job.touch()
         logger.exception("notes job %s: transcribe failed", job_id)
@@ -176,6 +193,8 @@ async def _run_notes(job_id: str) -> None:
 
     if not segments:
         job.status = JobStatus.failed
+        job.stage = "failed"
+        job.progress_percent = 100
         job.error = "no speech detected in file"
         job.touch()
         return
@@ -184,7 +203,7 @@ async def _run_notes(job_id: str) -> None:
     # user with something useful.
     # Plain transcript = joined text (used by the LLM prompt where
     # timestamps are noise). Timed transcript = per-segment timestamped
-    # lines, written to transcript.txt on disk so users can scrub.
+    # lines, written to disk as transcript.txt so users can scrub.
     job.transcript = "\n".join(seg.text for seg in segments)
     job.transcript_timed = "\n".join(
         f"[{_format_timestamp(seg.start)}] {seg.text}" for seg in segments
@@ -193,6 +212,9 @@ async def _run_notes(job_id: str) -> None:
 
     # 2. Summarize / structure
     try:
+        job.stage = "summarizing"
+        job.progress_percent = 70
+        job.touch()
         notes = await generate_notes(
             segments=segments,
             title=job.title,
@@ -202,11 +224,15 @@ async def _run_notes(job_id: str) -> None:
         job.key_topics = notes["key_topics"]
         job.sections = notes["sections"]
         job.mindmap = notes["mindmap"]
+        job.progress_percent = 88
         # Stage 3: optional GPT-5.4 polish. Non-fatal — if the upstream
         # endpoint hiccups, we keep the unpolished notes and mark
         # polished=False. The dedicated repolish script can retry later.
         if polish_enabled():
             try:
+                job.stage = "polishing"
+                job.progress_percent = 92
+                job.touch()
                 polished = await polish(
                     title=job.title,
                     transcript=job.transcript,
@@ -229,12 +255,16 @@ async def _run_notes(job_id: str) -> None:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("notes job %s: polish step failed: %s", job_id, exc)
         job.status = JobStatus.done
+        job.stage = "done"
+        job.progress_percent = 100
         logger.info("notes job %s: done", job_id)
     except Exception as exc:  # noqa: BLE001
         # We've already populated transcript above — surface the partial
         # result with a failed status so the UI can still show the
         # transcript even when the summarization step blew up.
         job.status = JobStatus.failed
+        job.stage = "failed"
+        job.progress_percent = 100
         job.error = f"notes generation error: {exc}"
         logger.exception("notes job %s: generation failed", job_id)
     finally:

@@ -105,6 +105,8 @@ def _catch_up_missing_ai(ai: AIClient, summary: dict) -> None:
                     v.file_path = None
                     v.ai_status = None
                     v.ai_job_id = None
+                    v.ai_stage = None
+                    v.ai_progress_percent = None
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
             continue
         try:
@@ -117,6 +119,8 @@ def _catch_up_missing_ai(ai: AIClient, summary: dict) -> None:
                 v = s.get(Video, row.id)
                 if v is not None:
                     v.ai_status = "failed"
+                    v.ai_stage = "failed"
+                    v.ai_progress_percent = 100
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
             continue
         with session_scope() as s:
@@ -124,6 +128,8 @@ def _catch_up_missing_ai(ai: AIClient, summary: dict) -> None:
             if v is not None:
                 v.ai_status = "pending"
                 v.ai_job_id = job_id
+                v.ai_stage = "queued"
+                v.ai_progress_percent = 0
         summary["ai_submitted"] += 1
 
 
@@ -195,6 +201,8 @@ def _poll_downloads(mediago: MediagoClient, ai: AIClient, summary: dict) -> None
                     if v is not None:
                         v.ai_status = "pending"
                         v.ai_job_id = job_id
+                        v.ai_stage = "queued"
+                        v.ai_progress_percent = 0
                 summary["ai_submitted"] += 1
         elif status == "failed":
             if _handle_failed_download(row, mediago, summary):
@@ -295,15 +303,21 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
                 if v is not None:
                     v.ai_status = None
                     v.ai_job_id = None
+                    v.ai_stage = None
+                    v.ai_progress_percent = None
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
             continue
 
         status = data.get("status")
+        stage = data.get("stage")
+        progress_percent = data.get("progress_percent")
         if status == "processing":
             with session_scope() as s:
                 v = s.get(Video, row.id)
-                if v is not None and v.ai_status != "processing":
+                if v is not None:
                     v.ai_status = "processing"
+                    v.ai_stage = stage or "transcribing"
+                    v.ai_progress_percent = int(progress_percent or 0)
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
         elif status == "done":
             payload = {
@@ -321,6 +335,8 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
                 v = s.get(Video, row.id)
                 if v is not None:
                     v.ai_status = "done"
+                    v.ai_stage = "done"
+                    v.ai_progress_percent = 100
                     v.notes_json = json.dumps(payload, ensure_ascii=False)
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
                     # Persist to disk while we still have the row data —
@@ -341,6 +357,8 @@ def _poll_ai_jobs(ai: AIClient, summary: dict) -> None:
                 v = s.get(Video, row.id)
                 if v is not None:
                     v.ai_status = "failed"
+                    v.ai_stage = "failed"
+                    v.ai_progress_percent = 100
                     v.updated_at = dt.datetime.now(dt.timezone.utc)
 
 

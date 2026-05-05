@@ -28,7 +28,7 @@ export const AUTO_CLEANUP_DAYS = parseInt(
   10,
 );
 export const MAX_CONCURRENT_DOWNLOADS = parseInt(
-  process.env.MAX_CONCURRENT_DOWNLOADS || "3",
+  process.env.MAX_CONCURRENT_DOWNLOADS || "1",
   10,
 );
 export const MAX_CONCURRENT_TASKS = parseInt(

@@ -16,6 +16,7 @@ just builds the right prompt and parses the JSON.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -23,11 +24,20 @@ import re
 from typing import Any
 
 from models.schemas import SubtitleSegment
-from services.gpu_manager import gpu_manager
 from services.lmstudio_service import lmstudio_service
 
 
 logger = logging.getLogger(__name__)
+
+# Dedicated semaphore for summary-LLM calls. Ollama serializes its own
+# requests, but we still cap our concurrency so that we don't open a huge
+# pool of pending HTTP requests. Crucially this is *separate* from the
+# FUNASR GPU semaphore — earlier we shared a 2-slot pool with FUNASR, and
+# with hundreds of FUNASR tasks queued, summary calls were starved
+# indefinitely (FIFO put them at the back of the queue every time).
+_LLM_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(
+    int(os.getenv("LLM_CONCURRENCY", "1"))
+)
 
 
 _NOTES_PROMPT_ZH = """\
@@ -191,9 +201,9 @@ async def generate_notes(
 ) -> dict[str, Any]:
     """Run the LLM with a notes-generation prompt and return parsed JSON.
 
-    Holds one GPU semaphore slot for the duration of inference (the
-    transcribe step in the caller already released its slot). On any
-    parse failure we still return a usable stub.
+    Uses a dedicated LLM semaphore (separate from the FUNASR GPU pool) so
+    summary calls don't starve behind hundreds of queued transcriptions.
+    On any parse failure we still return a usable stub.
     """
     subtitle_text = _segments_to_prompt_text(segments)
     prompt = _PROMPTS.get(language, _NOTES_PROMPT_ZH).format(
@@ -201,9 +211,7 @@ async def generate_notes(
         subtitle_text=subtitle_text,
     )
 
-    # Use the lmstudio_service's client + load handling — same model, same
-    # GPU semaphore, just a different prompt.
-    async with gpu_manager.acquire():
+    async with _LLM_SEMAPHORE:
         await lmstudio_service._ensure_loaded()  # noqa: SLF001 — intentional reuse
         try:
             response = await lmstudio_service._client.chat.completions.create(  # noqa: SLF001

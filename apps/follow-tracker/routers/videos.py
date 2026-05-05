@@ -33,6 +33,8 @@ def _to_out(v: Video) -> VideoOut:
         last_retry_at=v.last_retry_at,
         ai_status=v.ai_status,
         ai_job_id=v.ai_job_id,
+        ai_stage=v.ai_stage,
+        ai_progress_percent=v.ai_progress_percent,
         notes=v.notes_json,  # validator parses JSON
         is_paid_preview=bool(v.is_paid_preview),
         actual_duration_seconds=v.actual_duration_seconds,

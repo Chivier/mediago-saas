@@ -25,6 +25,15 @@ class JobStatus(str, Enum):
     failed = "failed"
 
 
+class JobStage(str, Enum):
+    queued = "queued"
+    transcribing = "transcribing"
+    summarizing = "summarizing"
+    polishing = "polishing"
+    done = "done"
+    failed = "failed"
+
+
 # ---------------------------------------------------------------------------
 # Subtitle schemas
 # ---------------------------------------------------------------------------
@@ -63,6 +72,8 @@ class SubtitleJobResult(BaseModel):
 
     job_id: str
     status: JobStatus
+    stage: JobStage = JobStage.queued
+    progress_percent: int = Field(default=0, ge=0, le=100)
     file_path: str = ""
     language: str = "auto"
     subtitles: list[SubtitleSegment] = Field(default_factory=list)
@@ -117,6 +128,8 @@ class SummarizeJobResult(BaseModel):
 
     job_id: str
     status: JobStatus
+    stage: JobStage = JobStage.queued
+    progress_percent: int = Field(default=0, ge=0, le=100)
     file_path: str = ""
     title: str | None = None
     language: str = "zh"
@@ -158,6 +171,8 @@ class SubtitleJob(BaseModel):
 
     job_id: str
     status: JobStatus = JobStatus.queued
+    stage: JobStage = JobStage.queued
+    progress_percent: int = 0
     file_path: str
     language: str = "auto"
     subtitles: list[SubtitleSegment] = Field(default_factory=list)
@@ -172,6 +187,8 @@ class SubtitleJob(BaseModel):
         return SubtitleJobResult(
             job_id=self.job_id,
             status=self.status,
+            stage=self.stage,
+            progress_percent=self.progress_percent,
             file_path=self.file_path,
             language=self.language,
             subtitles=self.subtitles,
@@ -187,6 +204,8 @@ class SummarizeJob(BaseModel):
 
     job_id: str
     status: JobStatus = JobStatus.queued
+    stage: JobStage = JobStage.queued
+    progress_percent: int = 0
     file_path: str
     title: str | None = None
     subtitles: list[SubtitleSegment] | None = None
@@ -204,6 +223,8 @@ class SummarizeJob(BaseModel):
         return SummarizeJobResult(
             job_id=self.job_id,
             status=self.status,
+            stage=self.stage,
+            progress_percent=self.progress_percent,
             file_path=self.file_path,
             title=self.title,
             language=self.language,

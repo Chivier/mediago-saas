@@ -33,6 +33,15 @@ followClient.interceptors.response.use(
 export type Platform = "bilibili" | "youtube";
 export type CreatorStatus = "ok" | "error";
 
+export type AiStage =
+  | "queued"
+  | "transcribing"
+  | "summarizing"
+  | "polishing"
+  | "done"
+  | "failed"
+  | null;
+
 export interface Creator {
   id: number;
   platform: Platform;
@@ -110,6 +119,8 @@ export interface FollowVideo {
   lastRetryAt: string | null;
   aiStatus: AiStatus;
   aiJobId: string | null;
+  aiStage?: AiStage;
+  aiProgressPercent?: number | null;
   notes: VideoNotes | null;
   // True when BBDown only managed to grab a preview clip — usually a
   // paid / member-only upload that the configured cookie didn't unlock.

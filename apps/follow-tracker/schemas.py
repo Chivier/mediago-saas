@@ -78,6 +78,10 @@ class VideoOut(BaseModel):
     )
     ai_status: Optional[str] = Field(default=None, serialization_alias="aiStatus")
     ai_job_id: Optional[str] = Field(default=None, serialization_alias="aiJobId")
+    ai_stage: Optional[str] = Field(default=None, serialization_alias="aiStage")
+    ai_progress_percent: Optional[int] = Field(
+        default=None, serialization_alias="aiProgressPercent"
+    )
     notes: Optional[dict[str, Any]] = None
     is_paid_preview: bool = Field(default=False, serialization_alias="isPaidPreview")
     actual_duration_seconds: Optional[int] = Field(
